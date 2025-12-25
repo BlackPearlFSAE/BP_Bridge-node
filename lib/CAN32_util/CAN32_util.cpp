@@ -62,8 +62,7 @@ void CAN32_initCANBus(int can_tx,int can_rx, bool readyflag,
 }
 
 // SENDING STD message
-int CAN32_sendCAN(twai_message_t* tx_msg, bool canreadyflag= 1) {
-  if (!canreadyflag) return;
+int CAN32_sendCAN(twai_message_t* tx_msg) {
   // Transmit and store in sending status
   int canSend_status = twai_transmit(tx_msg, pdMS_TO_TICKS(pdmslimit));
   // Serial.printf("Send - ID: 0x%X, DLC: %d, Data: ", tx_msg->identifier, tx_msg->data_length_code);
@@ -74,12 +73,9 @@ int CAN32_sendCAN(twai_message_t* tx_msg, bool canreadyflag= 1) {
 // SENDING EXT message (Wait, we just adjust its ID flag)
 
 // Polling CAN Reading
-int CAN32_receiveCAN(twai_message_t* rx_msg, bool canreadyflag = 1){
-  if (!canreadyflag) return;
+int CAN32_receiveCAN(twai_message_t* rx_msg){
   int canReceive_status = twai_receive(rx_msg, pdMS_TO_TICKS(pdmslimit));
   // Serial.printf("Received - ID: 0x%X, DLC: %d, Data: ", rx_msg->identifier, rx_msg->data_length_code);
-
-
   return canReceive_status;
   // Error Handling will be for user
 }
