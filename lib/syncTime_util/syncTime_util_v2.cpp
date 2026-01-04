@@ -1,149 +1,168 @@
-// #include <Arduino.h>
-// #include <syncTime_util.h>
-// #include <RTClib.h>  // For DateTime object support
+#include <Arduino.h>
+#include <syncTime_util_v2.h>
 
-// // ============================================================================
-// // TIME FORMATTING and SYNC TIME HELPER FUNCTIONS (Version 2 - DateTime Support)
-// // ============================================================================
-// bool timeIsSynchronized = false;
-// uint64_t baseTimestamp = 0;
-// uint64_t syncMillis = 0; // the time that has been sync
+// ============================================================================
+// CLEAN TIME SYSTEM - Source-Agnostic Unix Timestamp Management
+// ============================================================================
 
-// // ============================================================================
-// // NEW: DateTime Object Support
-// // ============================================================================
+// ABSOLUTE TIME (from external source - RTC/NTP/Server)
+uint64_t deviceAbsoluteTime_ms = 0;  // Unix timestamp in milliseconds
 
-// /**
-//  * Get synchronized time as RTClib DateTime object
-//  * Returns: DateTime object with current time, or invalid DateTime if not synced
-//  */
-// DateTime getSynchronizedDateTime() {
-//   uint64_t currentMs = getSynchronizedTime();
-//   if (currentMs == 0) {
-//     // Return invalid DateTime if not synced
-//     return DateTime(0);
-//   }
-//   // Convert milliseconds to seconds for DateTime constructor
-//   return DateTime((uint32_t)(currentMs / 1000ULL));
-// }
+// RELATIVE TIME (device uptime tracking)
+unsigned long deviceRelativeTime_syncPoint = 0;  // millis() when last synced
 
-// /**
-//  * Get RTC time as DateTime object (from hardware RTC)
-//  * Requires: External RTC instance passed in
-//  * Returns: DateTime object from RTC
-//  */
-// DateTime RTC_getDateTime(RTC_DS3231& rtc) {
-//   return rtc.now();
-// }
+// Sync status flag
+bool deviceTimeIsSynced = false;
 
-// /**
-//  * Alternative: Get Unix timestamp from RTC and return as DateTime
-//  * This is what you mentioned - "RTC_getUnix but return the DateTime"
-//  */
-// DateTime RTC_getDateTimeFromUnix(RTC_DS3231& rtc) {
-//   uint32_t unixTime = rtc.now().unixtime();
-//   return DateTime(unixTime);
-// }
+// ============================================================================
+// CORE TIME FUNCTIONS
+// ============================================================================
 
-// // ============================================================================
-// // EXISTING FUNCTIONS - Compatible with DateTime approach
-// // ============================================================================
+/**
+ * Set absolute time from ANY source (RTC, NTP, Server, Manual)
+ * Accepts: Unix timestamp in milliseconds
+ * This is your single point of time synchronization
+ */
+void setDeviceAbsoluteTime(uint64_t unixTimeMs) {
+  deviceAbsoluteTime_ms = unixTimeMs;
+  deviceRelativeTime_syncPoint = millis();  // Mark sync point
+  deviceTimeIsSynced = true;
+}
 
-// // getMCUtime that has been synchronized with time source
-// unsigned long long getSynchronizedTime() {
-//   if (timeIsSynchronized) {
-//     // We have synced at least once - calculate time based on millis() offset
-//     unsigned long currentMillis = millis();
-//     unsigned long elapsedMillis = currentMillis - syncMillis;
+/**
+ * Get current device time (absolute if synced, relative if not)
+ * Returns: Unix timestamp in milliseconds
+ * This auto-calculates elapsed time since last sync
+ */
+uint64_t getDeviceRelativeTime() {
+  if (!deviceTimeIsSynced) {
+    // Not synced - return device uptime
+    return (uint64_t)millis();
+  }
 
-//     // Return base timestamp + elapsed time
-//     return baseTimestamp + (unsigned long long)elapsedMillis;
+  // Calculate elapsed time since sync
+  unsigned long elapsed = millis() - deviceRelativeTime_syncPoint;
+  return deviceAbsoluteTime_ms + (uint64_t)elapsed;
+}
 
-//   } else {
-//     // Not synced yet - return 0 or a flag value
-//     return 0ULL;
-//   }
-// }
+/**
+ * Check if device time has been synchronized
+ * Returns: true if synced with external source, false if using millis()
+ */
+bool isDeviceTimeSynced() {
+  return deviceTimeIsSynced;
+}
 
-// /**
-//  * Sync device time using DateTime object
-//  * Compatible with RTC, NTP, or any DateTime source
-//  */
-// void syncDevice_to_DateTime(DateTime dt) {
-//   uint64_t serverTimeMs = (uint64_t)dt.unixtime() * 1000ULL;
-//   syncDevice_to_serverTime(serverTimeMs);
-// }
+/**
+ * Resync with drift checking (optional - prevents unnecessary resyncs)
+ * Only updates if drift exceeds threshold (default: 1 second)
+ * Returns: true if resynced, false if skipped
+ */
+bool resyncDeviceTime(uint64_t newUnixTimeMs, uint64_t driftThreshold_ms) {
+  if (!deviceTimeIsSynced) {
+    // First sync - always accept
+    setDeviceAbsoluteTime(newUnixTimeMs);
+    return true;
+  }
 
-// /**
-//  * Original sync function - still works as before
-//  * Only resyncs if drift exceeds 1 second
-//  */
-// void syncDevice_to_serverTime(uint64_t serverTimeMs) {
-//   const unsigned long long MIN_DRIFT_MS = 1000ULL;
-//   // Drifted about 1 s should be enough to resync
-//   if (timeIsSynchronized) {
-//     uint64_t nowMs = getSynchronizedTime();
-//     int64_t diff = (int64_t)serverTimeMs - (int64_t)nowMs;
-//     if (llabs(diff) < (long long)MIN_DRIFT_MS) return; // no-op if drift small
-//   }
-//   baseTimestamp = serverTimeMs;
-//   syncMillis = millis();
-//   timeIsSynchronized = true;
-// }
+  // Check drift
+  uint64_t currentTime = getDeviceRelativeTime();
+  int64_t drift = (int64_t)newUnixTimeMs - (int64_t)currentTime;
 
-// // ============================================================================
-// // FORMATTING FUNCTIONS - Work with both uint64_t and DateTime
-// // ============================================================================
+  if (llabs(drift) >= (long long)driftThreshold_ms) {
+    // Drift exceeded - resync
+    setDeviceAbsoluteTime(newUnixTimeMs);
+    return true;
+  }
 
-// void formatDateTime(char* outBuf, uint64_t timestampMs) {
-//   // Convert milliseconds to seconds
-//   uint64_t timestampSec = timestampMs / 1000ULL;
+  // Drift within tolerance - skip resync
+  return false;
+}
 
-//   // This gives UTC time
-//   time_t rawtime = (time_t)timestampSec;
-//   struct tm * timeinfo;
-//   timeinfo = gmtime(&rawtime);
+// ============================================================================
+// FORMATTING FUNCTIONS - Timezone Support
+// ============================================================================
 
-//   // Format: YYYY-MM-DD HH:MM:SS
-//   sprintf(outBuf, "%04d-%02d-%02d %02d:%02d:%02d",
-//           timeinfo->tm_year + 1900,
-//           timeinfo->tm_mon + 1,
-//           timeinfo->tm_mday,
-//           timeinfo->tm_hour,
-//           timeinfo->tm_min,
-//           timeinfo->tm_sec);
-// }
+/**
+ * Format Unix timestamp to human-readable string with timezone offset
+ * Parameters:
+ *   - outBuf: Output buffer (minimum 32 chars)
+ *   - unixMs: Unix timestamp in milliseconds
+ *   - timezoneOffsetHours: Hours offset from UTC (e.g., 7 for Bangkok, -5 for EST)
+ */
+void formatUnixTime(char* outBuf, uint64_t unixMs, int timezoneOffsetHours) {
+  // Convert to seconds and apply timezone offset
+  uint64_t unixSec = (unixMs / 1000ULL) + (timezoneOffsetHours * 3600);
 
-// void formatDateTimeBangkok(char* outBuf, uint64_t timestampMs) {
-//   // Convert milliseconds to seconds
-//   uint64_t timestampSec = timestampMs / 1000ULL;
-//   // Add 7 hours for Bangkok timezone (UTC+7)
-//   timestampSec += (7 * 3600);
+  time_t rawtime = (time_t)unixSec;
+  struct tm* timeinfo = gmtime(&rawtime);
 
-//   time_t rawtime = (time_t)timestampSec;
-//   struct tm * timeinfo;
-//   timeinfo = gmtime(&rawtime);
+  // Format: YYYY-MM-DD HH:MM:SS
+  sprintf(outBuf, "%04d-%02d-%02d %02d:%02d:%02d",
+          timeinfo->tm_year + 1900,
+          timeinfo->tm_mon + 1,
+          timeinfo->tm_mday,
+          timeinfo->tm_hour,
+          timeinfo->tm_min,
+          timeinfo->tm_sec);
+}
 
-//   // Format: YYYY-MM-DD HH:MM:SS
-//   sprintf(outBuf, "%04d-%02d-%02d %02d:%02d:%02d",
-//           timeinfo->tm_year + 1900,
-//           timeinfo->tm_mon + 1,
-//           timeinfo->tm_mday,
-//           timeinfo->tm_hour,
-//           timeinfo->tm_min,
-//           timeinfo->tm_sec);
-// }
+/**
+ * Convenience wrapper for UTC formatting
+ */
+void formatUnixTime_UTC(char* outBuf, uint64_t unixMs) {
+  formatUnixTime(outBuf, unixMs, 0);
+}
 
-// /**
-//  * NEW: Format DateTime object to string
-//  * Overload for direct DateTime formatting
-//  */
-// void formatDateTime(char* outBuf, DateTime dt) {
-//   uint64_t timestampMs = (uint64_t)dt.unixtime() * 1000ULL;
-//   formatDateTime(outBuf, timestampMs);
-// }
+/**
+ * Convenience wrapper for Bangkok time (UTC+7)
+ */
+void formatUnixTime_Bangkok(char* outBuf, uint64_t unixMs) {
+  formatUnixTime(outBuf, unixMs, 7);
+}
 
-// void formatDateTimeBangkok(char* outBuf, DateTime dt) {
-//   uint64_t timestampMs = (uint64_t)dt.unixtime() * 1000ULL;
-//   formatDateTimeBangkok(outBuf, timestampMs);
-// }
+// ============================================================================
+// BACKWARD COMPATIBILITY LAYER (for existing code)
+// ============================================================================
+
+/**
+ * Legacy function name mapping for backward compatibility
+ * Maps old getSynchronizedTime() to new getDeviceRelativeTime()
+ */
+unsigned long long getSynchronizedTime() {
+  return getDeviceRelativeTime();
+}
+
+/**
+ * Legacy function name mapping for backward compatibility
+ * Maps old syncDevice_to_serverTime() to new setDeviceAbsoluteTime()
+ */
+void syncDevice_to_serverTime(uint64_t serverTimeMs) {
+  resyncDeviceTime(serverTimeMs, 1000ULL);  // 1 second drift tolerance
+}
+
+/**
+ * Legacy function name mapping for backward compatibility
+ */
+void formatDateTimeBangkok(char* outBuf, uint64_t timestampMs) {
+  formatUnixTime_Bangkok(outBuf, timestampMs);
+}
+
+/**
+ * Legacy function name mapping for backward compatibility
+ */
+void formatDateTime(char* outBuf, uint64_t timestampMs) {
+  formatUnixTime_UTC(outBuf, timestampMs);
+}
+
+// Legacy global variable exports
+bool timeIsSynchronized = false;  // Deprecated - use isDeviceTimeSynced()
+uint64_t baseTimestamp = 0;       // Deprecated - use deviceAbsoluteTime_ms
+uint64_t syncMillis = 0;          // Deprecated - use deviceRelativeTime_syncPoint
+
+// Sync legacy globals on every call (for backward compatibility)
+void _syncLegacyGlobals() {
+  timeIsSynchronized = deviceTimeIsSynced;
+  baseTimestamp = deviceAbsoluteTime_ms;
+  syncMillis = deviceRelativeTime_syncPoint;
+}

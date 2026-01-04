@@ -16,7 +16,7 @@
 
 #include <BP_mobile_util.h>
 #include <SD32_util.h>
-#include <syncTime_util.h>
+#include <syncTime_util_v2.h>  // V2: Clean time system
 #include <CAN32_util.h>
 // ============================================================================
 // BP MOBILE SERVER CONFIGURATION
@@ -295,9 +295,11 @@ void mockElectricalData(Electrical *ElectSensors);
 void mockOdometryData(Odometry *OdomSensors);
 void mockBAMOCarData(BAMOCar *BamoCar);
 
-uint64_t DeviceTime_Absolute = 0; // unix
-// uint32_t DeviceTime_Relative = 0; // Relative to sync time 
-  // as long as having absolute time the relative time can be calculate immediately
+// ============================================================================
+// DEVICE TIME SYSTEM - Source Agnostic
+// ============================================================================
+uint64_t DeviceTime_Absolute = 0;  // Unix timestamp in ms (from ANY source: RTC/NTP/Server)
+// DeviceTime_Relative is calculated on-the-fly via getDeviceRelativeTime()
 
 // ============================================================================
 // SETUP
@@ -359,7 +361,15 @@ void setup() {
     BPMobile.setRegisterCallback(registerClient);
     BPMobile.initWebSocket(serverHost,serverPort,clientName);
   }
-  
+
+  // Sync device time with RTC on startup
+  uint64_t rtcUnixTime = RTC_getUnix() * 1000ULL;  // Convert to milliseconds
+  setDeviceAbsoluteTime(rtcUnixTime);
+  Serial.print("Device time synced with RTC: ");
+  char timeStr[32];
+  formatUnixTime_Bangkok(timeStr, rtcUnixTime);
+  Serial.println(timeStr);
+
   // showDeviceStatus();
 }
 
@@ -547,7 +557,7 @@ void showDeviceStatus() {
 
   // Time Sync Status
   Serial.print("║ Time Sync:       ");
-  if (timeIsSynchronized) {
+  if (isDeviceTimeSynced()) {
     Serial.println("✓ SYNCED           ║");
   } else {
     Serial.println("✗ NOT SYNCED       ║");
@@ -1232,13 +1242,13 @@ String   RTC_getISO(){
 void append_Timestamp_toCSVFile(File& dataFile, void* data) {
   (void)data;  // Unused - access globals directly
 
-  uint64_t syncTime = getSynchronizedTime();
+  uint64_t currentTime = getDeviceRelativeTime();
   uint64_t timestamp;
   char dateTimeStr[32] = "";
 
-  if (timeIsSynchronized) {
-    timestamp = (syncTime / 1000ULL);
-    formatDateTimeBangkok(dateTimeStr, syncTime);
+  if (isDeviceTimeSynced()) {
+    timestamp = (currentTime / 1000ULL);  // Convert ms to seconds
+    formatUnixTime_Bangkok(dateTimeStr, currentTime);
   } else {
     timestamp = millis() / 1000;
     strcpy(dateTimeStr, "NOT_SYNCED");
