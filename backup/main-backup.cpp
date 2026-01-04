@@ -83,8 +83,8 @@ const float STROKE_SAMPLING_RATE = 2.0;    // 2 Hz for stroke distance publish
 
 /* PIN DEF*/
 // GPIO 5,6  ADC reading
-#define stroke1_black 5
-#define stroke2_green 6
+#define STR_Roll 5
+#define STR_Heave 6
 
 // Camshaft position sensor Left, Right
 #define ENCODER_PINL 42
@@ -141,8 +141,8 @@ bool canVoltageValid = false;
 bool canCurrentValid = false;
 
 /* Stroke Sensors variables (Stroke_distance)*/
-float distance_stroke1_black = 0.0;
-float distance_stroke2_green = 0.0;
+float distance_STR_Roll = 0.0;
+float distance_STR_Heave = 0.0;
 float potvolts1_black = 0.0;
 float potvolts2_green = 0.0;
 // constant 
@@ -922,8 +922,8 @@ void sendStrokeData() {
   StaticJsonDocument<192> s1;
   s1["type"] = "data";
   s1["topic"] = "sensors/stroke1_distance";
-  s1["data"]["value"] = distance_stroke1_black;
-  s1["data"]["sensor_id"] = "STROKE1_BLACK";
+  s1["data"]["value"] = distance_STR_Roll;
+  s1["data"]["sensor_id"] = "STR_Roll";
   s1["timestamp"] = unixTimestamp;
   String msg1;
   serializeJson(s1, msg1);
@@ -933,17 +933,17 @@ void sendStrokeData() {
   StaticJsonDocument<192> s2;
   s2["type"] = "data";
   s2["topic"] = "sensors/stroke2_distance";
-  s2["data"]["value"] = distance_stroke2_green;
-  s2["data"]["sensor_id"] = "STROKE2_GREEN";
+  s2["data"]["value"] = distance_STR_Heave;
+  s2["data"]["sensor_id"] = "STR_Heave";
   s2["timestamp"] = unixTimestamp;
   String msg2;
   serializeJson(s2, msg2);
   webSocket.sendTXT(msg2);
 
   Serial.print("[BP Mobile] Stroke mm S1:");
-  Serial.print(distance_stroke1_black, 2);
+  Serial.print(distance_STR_Roll, 2);
   Serial.print(" S2:");
-  Serial.println(distance_stroke2_green, 2);
+  Serial.println(distance_STR_Heave, 2);
 }
 
 // ============================================================================
@@ -989,9 +989,9 @@ void logDataToSD() {
     dataFile.print(",");
     dataFile.print(Wheel_RPM_right, 2);
     dataFile.print(",");
-    dataFile.print(distance_stroke1_black, 3);
+    dataFile.print(distance_STR_Roll, 3);
     dataFile.print(",");
-    dataFile.println(distance_stroke2_green, 3);
+    dataFile.println(distance_STR_Heave, 3);
     
     dataFile.flush();
     dataFile.close();
@@ -1013,9 +1013,9 @@ void logDataToSD() {
     Serial.print(" RPMR:");
     Serial.print(Wheel_RPM_right, 2);
     Serial.print(" S1:");
-    Serial.print(distance_stroke1_black, 3);
+    Serial.print(distance_STR_Roll, 3);
     Serial.print("mm S2:");
-    Serial.print(distance_stroke2_green, 3);
+    Serial.print(distance_STR_Heave, 3);
     Serial.println("mm");
     
     dataPoint++;
@@ -1036,11 +1036,11 @@ void updateSensorReadings() {
   
   // ----- Stroke distances
   // Conversion from ADC value back to its sensor reading voltage
-  potvolts1_black = analogRead(stroke1_black) * (aref / pwmres);
-  potvolts2_green = analogRead(stroke2_green) * (aref / pwmres);
+  potvolts1_black = analogRead(STR_Roll) * (aref / pwmres);
+  potvolts2_green = analogRead(STR_Heave) * (aref / pwmres);
   // Conversion of sensor reading voltage KPM18-50mm distance, total distance is 52.91 mm
-  distance_stroke1_black = potvolts1_black * (max_distance1 / aref);
-  distance_stroke2_green = potvolts2_green * (max_distance2 / aref);
+  distance_STR_Roll = potvolts1_black * (max_distance1 / aref);
+  distance_STR_Heave = potvolts2_green * (max_distance2 / aref);
 
   // ----- RPM sensors (Wheel speeds)
   if (startCalculate) {

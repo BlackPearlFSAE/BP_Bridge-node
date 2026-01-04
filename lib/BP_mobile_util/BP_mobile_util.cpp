@@ -65,7 +65,7 @@ void BPMobileConfig::webSocketEvent(WStype_t type, uint8_t* payload, size_t leng
       break;
       
     case WStype_TEXT:
-      // handleMessage((char*)payload);
+      handleMessage((char*)payload);
       break;
       
     case WStype_ERROR:

@@ -12,6 +12,7 @@
 #include <MPU6050_light.h>
 #include <TinyGPS++.h>
 #include <HardwareSerial.h>
+#include <Ticker.h> // I Think I will just use this for BPMobile publisher
 
 #include <BP_mobile_util.h>
 #include <SD32_util.h>
@@ -75,31 +76,30 @@ void logDataToSD(char* csvFilename);
 #define BAMOCAR_REG_DC_CURRENT 0x20         // DC Current (CORRECTED from 0xC6!)
 #define BAMOCAR_REG_SPEED_ACTUAL 0x30       // Actual speed/RPM 
 
-unsigned long lastDebugPrint = 0;// DC Current (0.1A units, signed)
-const unsigned long CAN_REQUEST_INTERVAL = 200;  // Request every 100ms (May up it to 200ms)
-
+// CAN Bus timing and control variables
+unsigned long lastDebugPrint = 0;
+const unsigned long CAN_REQUEST_INTERVAL = 200;  // Request every 200ms
 bool canBusReady;
 unsigned long lastCANRequest = 0;
-// CANRequest_sequence
 uint8_t CANRequest_sequence = 0;  // 0=motor temp, 1=controller temp, 2=voltage, 3=current
-unsigned long lastPowerSend = 0;
-unsigned long lastCANSend = 0;
-// New timers for RPM and stroke publishes
-unsigned long lastRPMSend = 0;
-unsigned long lastStrokeSend = 0;
-/* Motor/Motor controller's parameters (CAN data, temp, Power) */
-float power = 0.0;
 
-// Bamocar CAN data
-float motorTemp1 = 0.0;
-float motorTemp2 = 0.0;
-float controllerTemp = 0.0;
-float canVoltage = 0.0;      // DC Link Voltage from CAN
-float canCurrent = 0.0;      // Motor Current from CAN
-bool motorTempValid = false;
-bool controllerTempValid = false;
-bool canVoltageValid = false;
-bool canCurrentValid = false;
+// BAMOCar D3 400 Data Structure
+typedef struct{
+  // Motor controller measurements (from CAN)
+  float motorTemp1 = 0.0;
+  float motorTemp2 = 0.0;
+  float controllerTemp = 0.0;
+  float canVoltage = 0.0;      // DC Link Voltage from CAN
+  float canCurrent = 0.0;      // Motor Current from CAN
+  float power = 0.0;           // Calculated power (V * I)
+
+  // Data validity flags
+  bool motorTempValid = false;
+  bool controllerTempValid = false;
+  bool canVoltageValid = false;
+  bool canCurrentValid = false;
+} BAMOCar;
+
 // CAN Bus functions
 void pack_RequestBamocarMsg(twai_message_t* msg,uint8_t regAddress);
 void process_ResponseBamocarMsg(twai_message_t* msg);
@@ -111,6 +111,15 @@ void analyzeCANValue(uint8_t reg, uint8_t* data);
 // ============================================================================
 // MEHCHANICAL SENSORS
 // ============================================================================
+
+typedef struct{
+  // Analog
+  float Wheel_RPM_L =0.0;
+  float Wheel_RPM_R =0.0; // Motor temp from NTC thermister or KTY11 
+  float STR_Heave_mm =0.0; // in mm scale
+  float STR_Roll_mm =0.0;
+} Mechanical;
+
 // --- RPM Sensors variable (Wheel_speed Left and Right) ---
 #define ENCODER_PINL 41
 #define ENCODER_PINR 42
@@ -127,26 +136,74 @@ void IRAM_ATTR ISR_COUNT_L();
 void IRAM_ATTR ISR_COUNT_R();
 void IRAM_ATTR ISRreset();
 void RPMinit(hw_timer_t* My_timer, int millisec);
-void RPMsensorUpdate();
+void RPMsensorUpdate(Mechanical *MechSensors);
 
 // --- Stroke Sensors variables (Heave and Roll Distance) ---
-#define stroke1_black 6
-#define stroke2_green 5
-float distance_stroke1_black = 0.0;
-float distance_stroke2_green = 0.0;
-float potvolts1_black = 0.0;
-float potvolts2_green = 0.0;
+#define STR_Roll 6
+#define STR_Heave 5
+float distance_STR_Roll = 0.0;
+float distance_STR_Heave = 0.0;
 const float aref = 3.3; 
 const int pwmres = 4095; // 12 bit ADC resolution
-const float max_distance1 = 52.91; // recalibrated with vernier -> Needs to recheck
+const float max_distance1 = 75.00; // recalibrated with vernier -> Needs to recheck // 52.91
 const float max_distance2 = 75.00; // Not_sure needs to check again
+
+// Publish timers for different data streams
+unsigned long lastPowerSend = 0;
+unsigned long lastRPMSend = 0;
+unsigned long lastStrokeSend = 0;
 void StrokesensorInit();
-void StrokesensorUpdate();
-
-
+void StrokesensorUpdate(Mechanical *MechSensors);
 // ============================================================================
 // ELECTRICAL SENSORS
 // ============================================================================
+
+typedef struct{
+  // Analog
+  float I_SENSE =0.0; // Max x A - -A
+  float TMP =0.0; // Motor temp from NTC thermister or KTY11 
+  float APPS =0.0;
+  float BPPS =0.0;
+  // Digital (Original signal 12V)
+  bool AMS_OK =0; 
+  bool IMD_OK =0;
+  bool HV_ON =0; // Except this one 24V
+  bool BSPD_OK =0; // And this one 5V
+} Electrical;
+
+// PIN Definition
+#define I_SENSE_PIN 4
+#define TMP_PIN 8
+#define APPS_PIN 15
+#define BPPS_PIN 7
+
+#define AMS_OK_PIN 37
+#define IMD_OK_PIN 38
+#define HV_ON_PIN 35
+#define BSPD_OK_PIN 36
+
+// set of constant to use (Might not be used )
+const float max_volt5 =  5.0;
+const float max_volt12 =  12.0;
+const float max_volt24 =  24.0;  // Fixed: was 5.0, should be 24.0
+
+// Potentiometer stroke sensors (APPS/BPPS) - voltage maps linearly to distance
+const float apps_max_dist_mm =  75.00;  // Full stroke distance
+const float bpps_max_dist_mm =  75.00;  // Full stroke distance
+const float apps_offset_mm = 0.0;       // Mechanical installation offset
+const float bpps_offset_mm = 0.0;       // Mechanical installation offset
+
+// Temperature sensor (NTC thermistor in voltage divider)
+const uint16_t tmp_series_res = 10000;  // 10k ohm series resistor
+// For voltage divider: Vout = Vcc * (R_NTC / (R_series + R_NTC))
+
+// Hall effect current sensor - adjust these based on your actual sensor
+const float i_sense_sensitivity = 0.1;  // V/A (example: ACS712-20A = 0.1 V/A)
+const float i_sense_offset = 2.5;       // V at 0A (Vcc/2 for bidirectional sensors)
+
+// --- ELECTRICAL SENSOR FUNCTIONS ---
+void ElectSensorsInit();
+void ElectSensorsUpdate(Electrical *ElectSensors);
 
 // --- THERMISTOR TEMPERATURE CONVERSION FUNCTIONS ---
 float convertNTCtoTemp(uint16_t resistance);
@@ -156,7 +213,6 @@ float convertKTYtoTemp(uint16_t resistance);
 // ODOMETRY SENSORS
 // ============================================================================
 
-// There I think I should unite odometry as one, but for now ... 
 typedef struct{
   // GPS
   double gps_lat =0;
@@ -171,7 +227,7 @@ typedef struct{
   float imu_gyrox  =0;
   float imu_gyroy  =0;
   float imu_gyroz  =0;
-}Odometry; // Maybe this should be after fusion?
+} Odometry;
 
 // --- IMU (MPU6050) ---
 #define IMU_SDA 42
@@ -221,12 +277,10 @@ void sendCANData();
 void sendRPMData();
 void sendStrokeData();
 
-
 // ============================================================================
 // SETUP
 // ============================================================================
 void setup() {
-  // Wire1.be
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); //disable brownout detector
   Serial.begin(115200);
   delay(1000);
@@ -262,6 +316,7 @@ void setup() {
   // Initialize all Mechanical and Electrical sensor
   RPMinit(My_timer, 100);
   StrokesensorInit();
+  ElectSensorsInit();
   
   // Connect to WiFi
   initWiFi(ssid,password);
@@ -272,28 +327,46 @@ void setup() {
     BPMobile.setRegisterCallback(registerClient);
     BPMobile.initWebSocket(serverHost,serverPort,clientName);
   }
-  
-
   // inspect Device status one time
   // showDeviceStatus();
 }
+
 
 // ============================================================================
 // MAIN LOOP
 // ============================================================================
 
-// Need a data struct for BAMO -> May Encapsulated in .h
-// Need a data struct for Rear Node -> May encapsulated in .h
-//  For now use the case that work for both
-
+void mockMechanicalData(Mechanical *MechSensors);
+void mockElectricalData(Electrical *ElectSensors);
+void mockOdometryData(Odometry *OdomSensors);
+void mockBAMOCarData(BAMOCar *BamoCar);
+void mockAllSensorData(Mechanical *MechSensors, Electrical *ElectSensors,
+                       Odometry *OdomSensors, BAMOCar *BamoCar);
+unsigned long lastCANSend = 0;
 void loop() {
+  // DateTime
   
   // Temp data structure per mcu loop
   twai_message_t txmsg;
   twai_message_t rxmsg;
   
-  // init mech , Elect, and Odometry strcut or can be vehicle class of those 3 structure?
-  Odometry myodometry;
+  // init sensors data structures
+  Odometry myOdometrySensor;
+  Electrical myElectSensors;
+  Mechanical myMechSensors;
+  BAMOCar myBAMOCar;
+
+  // Easy to remember alias (Might delete and Just use full name)
+  float& power = myBAMOCar.power;
+  float& motorTemp1 = myBAMOCar.motorTemp1;
+  float& motorTemp2 = myBAMOCar.motorTemp2;
+  float& controllerTemp = myBAMOCar.controllerTemp;
+  float& canVoltage = myBAMOCar.canVoltage;
+  float& canCurrent = myBAMOCar.canCurrent;
+  bool& motorTempValid = myBAMOCar.motorTempValid;
+  bool& controllerTempValid = myBAMOCar.controllerTempValid;
+  bool& canVoltageValid = myBAMOCar.canVoltageValid;
+  bool& canCurrentValid = myBAMOCar.canCurrentValid;
   
   // Update WiFi LED status
   (WiFi.status() == WL_CONNECTED) ? 
@@ -305,23 +378,25 @@ void loop() {
   // Handle WebSocket communication
   if (WiFi.status() == WL_CONNECTED) BPwebSocket->loop();
   
-  // Mechanical sensor update
-  RPMsensorUpdate();
-  StrokesensorUpdate();
-  // Electrical sensor update
-    // current sensor
-    // All digital fault status
-    // CAN Data from BMU internal bus
+  // Update Each Sensors
+    // RPMsensorUpdate(&myMechSensors);
+    // StrokesensorUpdate(&myMechSensors);
+    // ElectSensorsUpdate(&myElectSensors);
+    // GPSupdate(&myOdometrySensor);
+    // IMUupdate(&myOdometrySensor);
 
-  // Odometry sensor update
-  GPSupdate(&myodometry);
-  IMUupdate(&myodometry);
+  mockAllSensorData(&myMechSensors,&myElectSensors,&myOdometrySensor,&myBAMOCar);
   
   unsigned long now = millis();
-
+  // therre should be another receiving
   if (canBusReady) {
+
+    // Receive and process BAMOCar d3 400 CAN frame
     if(CAN32_receiveCAN(&rxmsg) == ESP_OK) process_ResponseBamocarMsg(&rxmsg);
-    else Serial.println("RX Buffer = 0");
+    else Serial.println("BAMO RX Buffer = 0");
+
+    // Receive and process AMS internal bus data
+
     // Request CAN data periodically
     // Will cycle: 0 = motor temp, 1 = controller temp, 2 = DC voltage, 3 = DC current
     // In loop() function, around line 310-330:
@@ -360,7 +435,6 @@ void loop() {
     power = canVoltage * canCurrent;
   }
 
-  
   // Log to SD card
   if (sdCardReady && (now - lastSDLog >= SD_LOG_INTERVAL)) {
     logDataToSD(csvFilename);
@@ -370,7 +444,6 @@ void loop() {
   
   // Send data to BP Mobile server if registered
   if (BPsocketstatus->isRegistered && BPsocketstatus->isConnected) {
-    
     // Send power data
     if (now - lastPowerSend >= (1000.0 / POWER_SAMPLING_RATE)) {
       sendPowerData();
@@ -392,10 +465,9 @@ void loop() {
       lastStrokeSend = now;
     }
   }
-   
-  
   delay(10); // Prevent watchdog issues
 }
+
 
 // ============================================================================
 // WIFI , DEVICE , BPMobile
@@ -612,7 +684,7 @@ void sendPowerData() {
   Serial.println("W");
 }
 
-// What does this CANData mean , I have to inspect
+// This is controller temperater
 void sendCANData() {
   unsigned long long unixTimestamp = getSynchronizedTime();
   // timeout function
@@ -695,8 +767,8 @@ void sendStrokeData() {
   JsonDocument s1;
   s1["type"] = "data";
   s1["topic"] = "sensors/stroke1_distance";
-  s1["data"]["value"] = distance_stroke1_black;
-  s1["data"]["sensor_id"] = "STROKE1_BLACK";
+  s1["data"]["value"] = distance_STR_Roll;
+  s1["data"]["sensor_id"] = "STR_Roll";
   s1["timestamp"] = unixTimestamp;
   String msg1;
   serializeJson(s1, msg1);
@@ -707,17 +779,17 @@ void sendStrokeData() {
   JsonDocument s2;
   s2["type"] = "data";
   s2["topic"] = "sensors/stroke2_distance";
-  s2["data"]["value"] = distance_stroke2_green;
-  s2["data"]["sensor_id"] = "STROKE2_GREEN";
+  s2["data"]["value"] = distance_STR_Heave;
+  s2["data"]["sensor_id"] = "STR_Heave";
   s2["timestamp"] = unixTimestamp;
   String msg2;
   serializeJson(s2, msg2);
   BPwebSocket->sendTXT(msg2);
 
   Serial.print("[BP Mobile] Stroke mm S1:");
-  Serial.print(distance_stroke1_black, 2);
+  Serial.print(distance_STR_Roll, 2);
   Serial.print(" S2:");
-  Serial.println(distance_stroke2_green, 2);
+  Serial.println(distance_STR_Heave, 2);
 }
 
 //  External Interrupt service Routine -- Encoder pulse counter ISR
@@ -745,34 +817,86 @@ void IRAM_ATTR ISR_COUNT_R() {
 void IRAM_ATTR ISRreset() {
   startCalculate = true;
 }
-void RPMsensorUpdate(){
+void RPMsensorUpdate(Mechanical *MechSensors){
   // ----- RPM sensors (Wheel speeds)
   if (startCalculate) {
     noInterrupts();
-    Wheel_RPM_left = (30000) / Period * ((float)counterL / ENCODER_N);
-    Wheel_RPM_right = (30000) / Period * ((float)counterR / ENCODER_N);
+    MechSensors->Wheel_RPM_L = (30000) / Period * ((float)counterL / ENCODER_N);
+    MechSensors->Wheel_RPM_R = (30000) / Period * ((float)counterR / ENCODER_N);
     counterL = 0;
     counterR = 0;
     startCalculate = false;
     interrupts();
   }
-
 }
-
 
 void StrokesensorInit(){
-  pinMode(stroke1_black,INPUT);
-  pinMode(stroke2_green,INPUT);
+  // The Roll is pin 5 or 6
+  pinMode(STR_Roll,INPUT_PULLDOWN);
+  pinMode(STR_Heave,INPUT_PULLDOWN);
 }
-void StrokesensorUpdate(){
+void StrokesensorUpdate(Mechanical *MechSensors){
   // ----- Stroke distances
   // Conversion from ADC value back to its sensor reading voltage
-  potvolts1_black = analogRead(stroke1_black) * (aref / pwmres);
-  potvolts2_green = analogRead(stroke2_green) * (aref / pwmres);
   // Conversion of sensor reading voltage KPM18-50mm distance, total distance is 52.91 mm
-  distance_stroke1_black = potvolts1_black * (max_distance1 / aref);
-  distance_stroke2_green = potvolts2_green * (max_distance2 / aref);
+  MechSensors->STR_Heave_mm = analogRead(STR_Roll) * (aref / pwmres);
+  MechSensors->STR_Roll_mm = analogRead(STR_Heave) * (aref / pwmres);
+}
 
+
+void ElectSensorsInit(){
+  pinMode(I_SENSE_PIN,INPUT_PULLDOWN);
+  pinMode(TMP_PIN,INPUT_PULLDOWN);
+  pinMode(APPS_PIN,INPUT_PULLDOWN);
+  pinMode(BPPS_PIN,INPUT_PULLDOWN);
+
+  pinMode(AMS_OK_PIN,INPUT_PULLDOWN);
+  pinMode(IMD_OK_PIN,INPUT_PULLDOWN);
+  pinMode(HV_ON_PIN,INPUT_PULLDOWN);
+  pinMode(BSPD_OK_PIN,INPUT_PULLDOWN);
+}
+
+void ElectSensorsUpdate(Electrical *ElectSensors){
+  // Read raw ADC values
+  uint16_t raw_i_sense = analogRead(I_SENSE_PIN);
+  uint16_t raw_tmp = analogRead(TMP_PIN);
+  uint16_t raw_apps = analogRead(APPS_PIN);
+  uint16_t raw_bpps = analogRead(BPPS_PIN);
+
+  // Convert ADC to voltage (0-3.3V mapped to 0-4095)
+  float volt_i_sense = (raw_i_sense / (float)pwmres) * aref;
+  float volt_tmp = (raw_tmp / (float)pwmres) * aref;
+  float volt_apps = (raw_apps / (float)pwmres) * aref;
+  float volt_bpps = (raw_bpps / (float)pwmres) * aref;
+
+  // --- Hall Effect Current Sensor ---
+  // Formula: I = (V_sensor - V_offset) / Sensitivity
+  ElectSensors->I_SENSE = (volt_i_sense - i_sense_offset) / i_sense_sensitivity;
+
+  // --- Temperature Sensor (NTC Thermistor in voltage divider) ---
+  // Calculate NTC resistance from voltage divider
+  // Vout = Vcc * (R_NTC / (R_series + R_NTC))
+  // Solving for R_NTC: R_NTC = (Vout * R_series) / (Vcc - Vout)
+  if (volt_tmp < aref - 0.01) {  // Avoid division by zero
+    uint16_t ntc_resistance = (volt_tmp * tmp_series_res) / (aref - volt_tmp);
+    ElectSensors->TMP = convertNTCtoTemp(ntc_resistance);
+  } else {
+    ElectSensors->TMP = 0.0;  // For iInvalid reading
+  }
+
+  // --- APPS (Accelerator Position) - Linear potentiometer ---
+  // Voltage maps linearly to distance (0V = 0mm, 3.3V = 75mm)
+  ElectSensors->APPS = (volt_apps / aref) * apps_max_dist_mm + apps_offset_mm;
+
+  // --- BPPS (Brake Position) - Linear potentiometer ---
+  // Voltage maps linearly to distance (0V = 0mm, 3.3V = 75mm)
+  ElectSensors->BPPS = (volt_bpps / aref) * bpps_max_dist_mm + bpps_offset_mm;
+
+  // --- Digital Fault Status Signals ---
+  ElectSensors->AMS_OK = digitalRead(AMS_OK_PIN);
+  ElectSensors->IMD_OK = digitalRead(IMD_OK_PIN);
+  ElectSensors->HV_ON = digitalRead(HV_ON_PIN);
+  ElectSensors->BSPD_OK = digitalRead(BSPD_OK_PIN);
 }
 
 
@@ -985,9 +1109,9 @@ void logDataToSD(char* csvFilename) {
     dataFile.print(",");
     
     // Write stroke distances
-    dataFile.print(distance_stroke1_black, 3);
+    dataFile.print(distance_STR_Roll, 3);
     dataFile.print(",");
-    dataFile.println(distance_stroke2_green, 3);
+    dataFile.println(distance_STR_Heave, 3);
     
     dataFile.flush();
     dataFile.close();
@@ -1012,9 +1136,9 @@ void logDataToSD(char* csvFilename) {
     Serial.print(" RPMR:");
     Serial.print(Wheel_RPM_right, 2);
     Serial.print(" S1:");
-    Serial.print(distance_stroke1_black, 3);
+    Serial.print(distance_STR_Roll, 3);
     Serial.print("mm S2:");
-    Serial.print(distance_stroke2_green, 3);
+    Serial.print(distance_STR_Heave, 3);
     Serial.println("mm");
     
     dataPoint++;
@@ -1296,4 +1420,92 @@ void scanBamocarIDs() {
     delay(500);
   }
   Serial.println("╚════════════════════════════════════════╝\n");
+}
+
+// ============================================================================
+// MOCK DATA FUNCTIONS FOR TESTING
+// ============================================================================
+
+
+
+// --- MECHANICAL SENSORS MOCK DATA ---
+void mockMechanicalData(Mechanical *MechSensors) {
+  // Simulate wheel RPM (0-500 RPM range with some variation)
+  MechSensors->Wheel_RPM_L = 250.0 + random(-50, 50);
+  MechSensors->Wheel_RPM_R = 245.0 + random(-50, 50);
+
+  // Simulate stroke sensors (0-75mm range)
+  MechSensors->STR_Heave_mm = 35.0 + random(-10, 10);
+  MechSensors->STR_Roll_mm = 40.0 + random(-10, 10);
+}
+
+// --- ELECTRICAL SENSORS MOCK DATA ---
+void mockElectricalData(Electrical *ElectSensors) {
+  // Simulate current sensor (-20A to +20A range)
+  ElectSensors->I_SENSE = 5.0 + random(-20, 80) / 10.0;
+
+  // Simulate temperature (20-80°C range)
+  ElectSensors->TMP = 45.0 + random(-10, 20);
+
+  // Simulate APPS and BPPS positions (0-75mm range)
+  ElectSensors->APPS = 30.0 + random(-15, 30);
+  ElectSensors->BPPS = 10.0 + random(-5, 15);
+
+  // Simulate digital fault status (mostly OK, occasional faults)
+  ElectSensors->AMS_OK = random(0, 10) > 1;    // 90% OK
+  ElectSensors->IMD_OK = random(0, 10) > 1;    // 90% OK
+  ElectSensors->HV_ON = random(0, 10) > 2;     // 80% ON
+  ElectSensors->BSPD_OK = random(0, 10) > 1;   // 90% OK
+}
+
+// --- ODOMETRY SENSORS MOCK DATA ---
+void mockOdometryData(Odometry *OdomSensors) {
+  // GPS Mock Data (Bangkok area coordinates)
+  OdomSensors->gps_lat = 13.7563 + random(-100, 100) / 10000.0;
+  OdomSensors->gps_lng = 100.5018 + random(-100, 100) / 10000.0;
+  OdomSensors->gps_age = random(0, 1000);
+  OdomSensors->gps_course = random(0, 360);
+  OdomSensors->gps_speed = random(0, 50);  // 0-50 m/s
+
+  // IMU Mock Data (accelerometer in m/s^2)
+  OdomSensors->imu_accelx = random(-100, 100) / 50.0;
+  OdomSensors->imu_accely = random(-100, 100) / 50.0;
+  OdomSensors->imu_accelz = 9.81 + random(-50, 50) / 100.0;
+
+  // IMU Mock Data (gyroscope in deg/s)
+  OdomSensors->imu_gyrox = random(-50, 50) / 10.0;
+  OdomSensors->imu_gyroy = random(-50, 50) / 10.0;
+  OdomSensors->imu_gyroz = random(-50, 50) / 10.0;
+}
+
+// --- BAMOCAR D3 400 MOCK DATA ---
+void mockBAMOCarData(BAMOCar *BamoCar) {
+  // Motor temperatures (30-80°C range)
+  BamoCar->motorTemp1 = 55.0 + random(-10, 15);
+  BamoCar->motorTemp2 = BamoCar->motorTemp1 + random(5, 10);
+  BamoCar->motorTempValid = true;
+
+  // Controller temperature (30-70°C range)
+  BamoCar->controllerTemp = 50.0 + random(-10, 15);
+  BamoCar->controllerTempValid = true;
+
+  // DC Link Voltage (200-240V range for typical EV)
+  BamoCar->canVoltage = 220.0 + random(-20, 20);
+  BamoCar->canVoltageValid = true;
+
+  // DC Current (0-100A range)
+  BamoCar->canCurrent = 30.0 + random(-10, 50);
+  BamoCar->canCurrentValid = true;
+
+  // Calculated power (V * I)
+  BamoCar->power = BamoCar->canVoltage * BamoCar->canCurrent;
+}
+
+// --- ALL SENSORS MOCK DATA (convenience function) ---
+void mockAllSensorData(Mechanical *MechSensors, Electrical *ElectSensors,
+                       Odometry *OdomSensors, BAMOCar *BamoCar) {
+  mockMechanicalData(MechSensors);
+  mockElectricalData(ElectSensors);
+  mockOdometryData(OdomSensors);
+  mockBAMOCarData(BamoCar);
 }
