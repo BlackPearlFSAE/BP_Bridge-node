@@ -4,6 +4,7 @@
 #include "SD.h"
 #include "SPI.h"
 #include <SD32_util.h>
+// int dataPoint = 0;
 
 void SD32_getSDsize(){
   uint64_t cardSize = SD.cardSize() / (1024 * 1024);
@@ -105,6 +106,28 @@ void SD32_generateUniqueFilename(int &sessionNumber, char* csvFilename) {
   
   Serial.print("Generated unique filename: ");
   Serial.println(csvFilename);
+}
+
+
+// Generic CSV Logging Function
+void logDataToSD(const char* filename, AppenderFunc* appenders, void** dataArray, size_t count) {
+  File dataFile = SD.open(filename, FILE_APPEND);
+
+  if (!dataFile) {
+    Serial.println("[SD Card] ERROR: Could not open file!");
+    return;
+  }
+
+  // Call all appenders
+  for (size_t i = 0; i < count; i++) {
+    appenders[i](dataFile, dataArray[i]);
+  }
+
+  // End CSV line
+  dataFile.println();
+
+  dataFile.flush();
+  dataFile.close();
 }
 
 // List Directory

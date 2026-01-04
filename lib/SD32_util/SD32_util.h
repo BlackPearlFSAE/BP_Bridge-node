@@ -4,6 +4,9 @@ namespace fs{
 class FS;
 };
 
+// ------- SD CARD LOGGING - APPENDER ARCHITECTURE
+typedef void (*AppenderFunc)(File&, void*);
+void logDataToSD(const char* filename, AppenderFunc* appenders, void** dataArray, size_t count);
 
 void getSDsize();
 void SD32_initSDCard(int sd_sck, int sd_miso, int sd_mosi, int sd_cs,bool &sdCardReady);
