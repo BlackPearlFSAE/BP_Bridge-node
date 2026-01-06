@@ -6,11 +6,9 @@
 // ============================================================================
 
 // ABSOLUTE TIME (from external source - RTC/NTP/Server)
-uint64_t deviceAbsoluteTime_ms = 0;  // Unix timestamp in milliseconds
-
+// uint64_t deviceAbsoluteTime = 0;  // Unix timestamp
 // RELATIVE TIME (device uptime tracking)
 unsigned long deviceRelativeTime_syncPoint = 0;  // millis() when last synced
-
 // Sync status flag
 bool deviceTimeIsSynced = false;
 
@@ -20,11 +18,10 @@ bool deviceTimeIsSynced = false;
 
 /**
  * Set absolute time from ANY source (RTC, NTP, Server, Manual)
- * Accepts: Unix timestamp in milliseconds
- * This is your single point of time synchronization
- */
-void setDeviceAbsoluteTime(uint64_t unixTimeMs) {
-  deviceAbsoluteTime_ms = unixTimeMs;
+ * Accepts: Unix timestamp in milliseconds or nanosec
+**/
+void syncTime_setAbsolute(uint64_t &deviceAbsoluteTime , uint64_t unixTimeMs) {
+  deviceAbsoluteTime = unixTimeMs;
   deviceRelativeTime_syncPoint = millis();  // Mark sync point
   deviceTimeIsSynced = true;
 }
@@ -34,7 +31,7 @@ void setDeviceAbsoluteTime(uint64_t unixTimeMs) {
  * Returns: Unix timestamp in milliseconds
  * This auto-calculates elapsed time since last sync
  */
-uint64_t getDeviceRelativeTime() {
+uint64_t syncTime_getRelative(uint64_t deviceAbsoluteTime) {
   if (!deviceTimeIsSynced) {
     // Not synced - return device uptime
     return (uint64_t)millis();
@@ -42,14 +39,14 @@ uint64_t getDeviceRelativeTime() {
 
   // Calculate elapsed time since sync
   unsigned long elapsed = millis() - deviceRelativeTime_syncPoint;
-  return deviceAbsoluteTime_ms + (uint64_t)elapsed;
+  return deviceAbsoluteTime + (uint64_t)elapsed;
 }
 
 /**
  * Check if device time has been synchronized
  * Returns: true if synced with external source, false if using millis()
  */
-bool isDeviceTimeSynced() {
+bool syncTime_isSynced() {
   return deviceTimeIsSynced;
 }
 
@@ -58,20 +55,20 @@ bool isDeviceTimeSynced() {
  * Only updates if drift exceeds threshold (default: 1 second)
  * Returns: true if resynced, false if skipped
  */
-bool resyncDeviceTime(uint64_t newUnixTimeMs, uint64_t driftThreshold_ms) {
+bool syncTime_resync(uint64_t &deviceAbsoluteTime,uint64_t newUnixTimeMs, uint64_t driftThreshold_ms) {
   if (!deviceTimeIsSynced) {
     // First sync - always accept
-    setDeviceAbsoluteTime(newUnixTimeMs);
+    syncTime_setAbsolute(deviceAbsoluteTime,newUnixTimeMs);
     return true;
   }
 
   // Check drift
-  uint64_t currentTime = getDeviceRelativeTime();
+  uint64_t currentTime = syncTime_getRelative(newUnixTimeMs);
   int64_t drift = (int64_t)newUnixTimeMs - (int64_t)currentTime;
 
   if (llabs(drift) >= (long long)driftThreshold_ms) {
     // Drift exceeded - resync
-    setDeviceAbsoluteTime(newUnixTimeMs);
+    syncTime_setAbsolute(deviceAbsoluteTime,newUnixTimeMs);
     return true;
   }
 
@@ -90,7 +87,7 @@ bool resyncDeviceTime(uint64_t newUnixTimeMs, uint64_t driftThreshold_ms) {
  *   - unixMs: Unix timestamp in milliseconds
  *   - timezoneOffsetHours: Hours offset from UTC (e.g., 7 for Bangkok, -5 for EST)
  */
-void formatUnixTime(char* outBuf, uint64_t unixMs, int timezoneOffsetHours) {
+void syncTime_formatUnix(char* outBuf, uint64_t unixMs, int timezoneOffsetHours) {
   // Convert to seconds and apply timezone offset
   uint64_t unixSec = (unixMs / 1000ULL) + (timezoneOffsetHours * 3600);
 
@@ -110,59 +107,6 @@ void formatUnixTime(char* outBuf, uint64_t unixMs, int timezoneOffsetHours) {
 /**
  * Convenience wrapper for UTC formatting
  */
-void formatUnixTime_UTC(char* outBuf, uint64_t unixMs) {
-  formatUnixTime(outBuf, unixMs, 0);
-}
-
-/**
- * Convenience wrapper for Bangkok time (UTC+7)
- */
-void formatUnixTime_Bangkok(char* outBuf, uint64_t unixMs) {
-  formatUnixTime(outBuf, unixMs, 7);
-}
-
-// ============================================================================
-// BACKWARD COMPATIBILITY LAYER (for existing code)
-// ============================================================================
-
-/**
- * Legacy function name mapping for backward compatibility
- * Maps old getSynchronizedTime() to new getDeviceRelativeTime()
- */
-unsigned long long getSynchronizedTime() {
-  return getDeviceRelativeTime();
-}
-
-/**
- * Legacy function name mapping for backward compatibility
- * Maps old syncDevice_to_serverTime() to new setDeviceAbsoluteTime()
- */
-void syncDevice_to_serverTime(uint64_t serverTimeMs) {
-  resyncDeviceTime(serverTimeMs, 1000ULL);  // 1 second drift tolerance
-}
-
-/**
- * Legacy function name mapping for backward compatibility
- */
-void formatDateTimeBangkok(char* outBuf, uint64_t timestampMs) {
-  formatUnixTime_Bangkok(outBuf, timestampMs);
-}
-
-/**
- * Legacy function name mapping for backward compatibility
- */
-void formatDateTime(char* outBuf, uint64_t timestampMs) {
-  formatUnixTime_UTC(outBuf, timestampMs);
-}
-
-// Legacy global variable exports
-bool timeIsSynchronized = false;  // Deprecated - use isDeviceTimeSynced()
-uint64_t baseTimestamp = 0;       // Deprecated - use deviceAbsoluteTime_ms
-uint64_t syncMillis = 0;          // Deprecated - use deviceRelativeTime_syncPoint
-
-// Sync legacy globals on every call (for backward compatibility)
-void _syncLegacyGlobals() {
-  timeIsSynchronized = deviceTimeIsSynced;
-  baseTimestamp = deviceAbsoluteTime_ms;
-  syncMillis = deviceRelativeTime_syncPoint;
+void syncTime_formatUnix_UTC(char* outBuf, uint64_t unixMs) {
+  syncTime_formatUnix(outBuf, unixMs, 0);
 }

@@ -28,6 +28,7 @@ private:
 
     // ownership flags for pointer members (set by constructor)
     bool _owns_webSocket = false;
+    bool _owns_socketstatus = false;
 public:
   // Accessible websocket related class , for developer to call in main.cpp
     socketstatus *webSocketstatus = nullptr;    

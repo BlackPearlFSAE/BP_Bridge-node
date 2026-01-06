@@ -2,44 +2,34 @@
 #define SYNCTIME_UTIL_V2_H
 
 #include <cstdint>
-
-// ============================================================================
-// CLEAN TIME SYSTEM API - Source-Agnostic Unix Timestamp Management
-// ============================================================================
-
 /**
  * CORE CONCEPT:
  * - deviceAbsoluteTime_ms: Unix timestamp from ANY source (RTC/NTP/Server)
  * - deviceRelativeTime: Calculated on-the-fly using millis() offset
  *
  * USAGE:
- * 1. Sync from any source: setDeviceAbsoluteTime(unixMs)
- * 2. Get current time: getDeviceRelativeTime()
- * 3. Format for display: formatUnixTime(buf, unixMs, timezoneOffset)
+ * 1. Sync from any source: syncTime_setAbsolute(unixMs)
+ * 2. Get current time: syncTime_getRelative()
+ * 3. Format for display: syncTime_formatUnix(buf, unixMs, timezoneOffset)
  */
 
-// ============================================================================
-// GLOBAL STATE (Direct Access)
-// ============================================================================
-
-extern uint64_t deviceAbsoluteTime_ms;           // Unix timestamp in ms (from external source)
-extern unsigned long deviceRelativeTime_syncPoint; // millis() when last synced
-extern bool deviceTimeIsSynced;                  // Sync status flag
+// extern uint64_t deviceAbsoluteTime;           // Unix timestamp in ms (from external source)
+// extern unsigned long deviceRelativeTime_syncPoint; // millis() when last synced
+// extern bool deviceTimeIsSynced;                  // Sync status flag
 
 // ============================================================================
 // CORE TIME FUNCTIONS (New Clean API)
 // ============================================================================
-
 /**
  * Set absolute time from ANY source (RTC, NTP, Server, Manual)
  * This is your SINGLE point of time synchronization
  *
  * Example usage:
- *   setDeviceAbsoluteTime(rtc.now().unixtime() * 1000ULL);  // From RTC
- *   setDeviceAbsoluteTime(ntpTime);                          // From NTP
- *   setDeviceAbsoluteTime(serverTime);                       // From WebSocket
+ *   syncTime_setAbsolute(rtc.now().unixtime() * 1000ULL);  // From RTC
+ *   syncTime_setAbsolute(ntpTime);                          // From NTP
+ *   syncTime_setAbsolute(serverTime);                       // From WebSocket
  */
-void setDeviceAbsoluteTime(uint64_t unixTimeMs);
+void syncTime_setAbsolute(uint64_t &deviceAbsoluteTime , uint64_t unixTimeMs);
 
 /**
  * Get current device time (auto-calculates from sync point)
@@ -48,13 +38,13 @@ void setDeviceAbsoluteTime(uint64_t unixTimeMs);
  * - If synced: deviceAbsoluteTime_ms + elapsed millis()
  * - If not synced: millis()
  */
-uint64_t getDeviceRelativeTime();
+uint64_t syncTime_getRelative(uint64_t deviceAbsoluteTime);
 
 /**
  * Check if device time has been synchronized with external source
  * Returns: true if synced, false if using millis()
  */
-bool isDeviceTimeSynced();
+bool syncTime_isSynced();
 
 /**
  * Resync with drift checking (prevents unnecessary resyncs)
@@ -66,7 +56,7 @@ bool isDeviceTimeSynced();
  *
  * Returns: true if resynced, false if skipped (drift too small)
  */
-bool resyncDeviceTime(uint64_t newUnixTimeMs, uint64_t driftThreshold_ms = 1000ULL);
+bool syncTime_resync(uint64_t &deviceAbsoluteTime, uint64_t newUnixTimeMs, uint64_t driftThreshold_ms = 1000ULL);
 
 // ============================================================================
 // FORMATTING FUNCTIONS (Timezone-Aware)
@@ -83,32 +73,11 @@ bool resyncDeviceTime(uint64_t newUnixTimeMs, uint64_t driftThreshold_ms = 1000U
  *
  * Output format: "YYYY-MM-DD HH:MM:SS"
  */
-void formatUnixTime(char* outBuf, uint64_t unixMs, int timezoneOffsetHours);
+void syncTime_formatUnix(char* outBuf, uint64_t unixMs, int timezoneOffsetHours);
 
 /**
  * Convenience wrappers for common timezones
  */
-void formatUnixTime_UTC(char* outBuf, uint64_t unixMs);     // UTC (GMT+0)
-void formatUnixTime_Bangkok(char* outBuf, uint64_t unixMs); // Bangkok (GMT+7)
-
-// ============================================================================
-// BACKWARD COMPATIBILITY LAYER (Legacy API)
-// ============================================================================
-
-/**
- * Legacy function names - maps to new API
- * Keep using these if you don't want to change existing code
- */
-unsigned long long getSynchronizedTime();              // → getDeviceRelativeTime()
-void syncDevice_to_serverTime(uint64_t serverTimeMs); // → resyncDeviceTime(...)
-void formatDateTimeBangkok(char* outBuf, uint64_t timestampMs); // → formatUnixTime_Bangkok(...)
-void formatDateTime(char* outBuf, uint64_t timestampMs);        // → formatUnixTime_UTC(...)
-
-/**
- * Legacy global variables (deprecated - use new API)
- */
-extern bool timeIsSynchronized;  // Deprecated - use isDeviceTimeSynced()
-extern uint64_t baseTimestamp;   // Deprecated - use deviceAbsoluteTime_ms
-extern uint64_t syncMillis;      // Deprecated - use deviceRelativeTime_syncPoint
+void syncTime_formatUnix_UTC(char* outBuf, uint64_t unixMs);     // UTC (GMT+0)
 
 #endif // SYNCTIME_UTIL_V2_H

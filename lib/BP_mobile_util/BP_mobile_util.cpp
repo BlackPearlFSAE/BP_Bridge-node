@@ -43,24 +43,59 @@ void BPMobileConfig::initWebSocket(const char* serverHost, const int serverPort,
   Serial.print(serverHost);
   Serial.print(":");
   Serial.println(serverPort);
-  this->webSocket->begin(serverHost, serverPort, "/");
-  [this](WStype_t type, uint8_t* payload, size_t length) {
+
+  // Debug: Check pointers before using
+  Serial.print("[initWebSocket] webSocket=0x");
+  // Not sure if this is what causes the crash , but I can't read core dumo
+  Serial.print((unsigned long)this->webSocket, HEX);
+  Serial.print(", webSocketstatus=0x");
+  Serial.println((unsigned long)this->webSocketstatus, HEX);
+
+  // IMPORTANT: Set event handler BEFORE calling begin() to avoid race conditions
+  this->webSocket->onEvent([this](WStype_t type, uint8_t* payload, size_t length) {
     this->webSocketEvent(type, payload, length);
-  };
+  });
+
   this->webSocket->setReconnectInterval(5000);
-  this->webSocketstatus->connectionStartTime = millis();
+
+  // Start connection last, after everything is set up // THE BREAK POINT IS HERE , BUT I don't know how to use the 
+  this->webSocket->begin(serverHost, serverPort, "/");
+
+  if (this->webSocketstatus != nullptr) {
+    this->webSocketstatus->connectionStartTime = millis();
+  } else {
+    Serial.println("[ERROR] webSocketstatus is NULL!");
+  }
 }
 void BPMobileConfig::webSocketEvent(WStype_t type, uint8_t* payload, size_t length) {
+  // Debug: Check this pointer FIRST before accessing members
+  Serial.print("[webSocketEvent] type=");
+  Serial.print(type);
+  Serial.print(", this=0x");
+  Serial.println((unsigned long)this, HEX);
+
+  if (!this) {
+    Serial.println("[ERROR] this pointer is NULL in webSocketEvent!");
+    return;
+  }
+
+  Serial.print("[webSocketEvent] webSocketstatus=0x");
+  Serial.println((unsigned long)this->webSocketstatus, HEX);
+
   switch(type) {
     case WStype_DISCONNECTED:
       Serial.println("[WebSocket] Disconnected");
-      this->webSocketstatus->isConnected = false;
-      this->webSocketstatus->isRegistered = false;
+      if (this->webSocketstatus) {
+        this->webSocketstatus->isConnected = false;
+        this->webSocketstatus->isRegistered = false;
+      }
       break;
-      
+
     case WStype_CONNECTED:
       Serial.println("[WebSocket] Connected!");
-      this->webSocketstatus->isConnected = true;
+      if (this->webSocketstatus) {
+        this->webSocketstatus->isConnected = true;
+      }
       this->registerMCUTopic();
       break;
       
@@ -152,6 +187,21 @@ BPMobileConfig::BPMobileConfig(WebSocketsClient* ws,socketstatus* status)
     this->_owns_webSocket = true;
   }
 
+  // Handle socketstatus object
+  if (status) {
+    this->webSocketstatus = status;
+    this->_owns_socketstatus = false;
+  } else {
+    this->webSocketstatus = new socketstatus();  // Create if not provided
+    this->_owns_socketstatus = true;
+  }
+
+  // Debug: Verify pointers are valid
+  Serial.print("[BPMobileConfig] Constructor: webSocket=0x");
+  Serial.print((unsigned long)this->webSocket, HEX);
+  Serial.print(", webSocketstatus=0x");
+  Serial.println((unsigned long)this->webSocketstatus, HEX);
+
   // ensure callbacks default to null (header already set, but be explicit)
   _registration_cb = nullptr;
   _timesourceProvider_fn = nullptr;
@@ -164,5 +214,9 @@ BPMobileConfig::~BPMobileConfig()
   if (_owns_webSocket && this->webSocket) {
     delete this->webSocket;
     this->webSocket = nullptr;
+  }
+  if (_owns_socketstatus && this->webSocketstatus) {
+    delete this->webSocketstatus;
+    this->webSocketstatus = nullptr;
   }
 }
