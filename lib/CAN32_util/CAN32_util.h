@@ -1,7 +1,7 @@
 #include <cstdint>
 
-void CAN32_initCANBus(int can_tx,int can_rx, bool readyflag,twai_timing_config_t t_config);
-void CAN32_initCANBus(int can_tx,int can_rx, bool readyflag,
+void CAN32_initCANBus(int can_tx,int can_rx, bool &readyflag,twai_timing_config_t t_config);
+void CAN32_initCANBus(int can_tx,int can_rx, bool &readyflag,
                 twai_timing_config_t t_config, twai_filter_config_t f_config);
 int CAN32_sendCAN(twai_message_t* tx_msg);
 int CAN32_receiveCAN(twai_message_t* rx_msg);

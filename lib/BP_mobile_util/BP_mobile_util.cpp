@@ -40,47 +40,33 @@ void BPMobileConfig::syncMCUtime_with_provider(uint64_t time){
 void BPMobileConfig::initWebSocket(const char* serverHost, const int serverPort, const char* clientName) {
   Serial.println("--- WebSocket Initialization ---");
   Serial.print("Connecting to: ws://");
-  Serial.print(serverHost);
-  Serial.print(":");
-  Serial.println(serverPort);
+  Serial.print(serverHost);Serial.print(":");Serial.println(serverPort);
 
-  // Debug: Check pointers before using
-  Serial.print("[initWebSocket] webSocket=0x");
-  // Not sure if this is what causes the crash , but I can't read core dumo
-  Serial.print((unsigned long)this->webSocket, HEX);
-  Serial.print(", webSocketstatus=0x");
-  Serial.println((unsigned long)this->webSocketstatus, HEX);
+  // // Debug: Check pointers before using
+  // Serial.print("[initWebSocket] webSocket=0x");
+  // Serial.print((unsigned long)this->webSocket, HEX);
+  // Serial.print(", webSocketstatus=0x");
+  // Serial.println((unsigned long)this->webSocketstatus, HEX);
 
-  // IMPORTANT: Set event handler BEFORE calling begin() to avoid race conditions
+  /* 
+  * IMPORTANT: Set event handler BEFORE calling begin()
+  * avoid race conditions 
+  * */
   this->webSocket->onEvent([this](WStype_t type, uint8_t* payload, size_t length) {
     this->webSocketEvent(type, payload, length);
   });
-
   this->webSocket->setReconnectInterval(5000);
-
-  // Start connection last, after everything is set up // THE BREAK POINT IS HERE , BUT I don't know how to use the 
   this->webSocket->begin(serverHost, serverPort, "/");
 
-  if (this->webSocketstatus != nullptr) {
-    this->webSocketstatus->connectionStartTime = millis();
-  } else {
-    Serial.println("[ERROR] webSocketstatus is NULL!");
-  }
+  (this->webSocketstatus != nullptr) ? this->webSocketstatus->connectionStartTime = millis()
+  : Serial.println("[ERROR] webSocketstatus is NULL!");
+
 }
 void BPMobileConfig::webSocketEvent(WStype_t type, uint8_t* payload, size_t length) {
-  // Debug: Check this pointer FIRST before accessing members
-  Serial.print("[webSocketEvent] type=");
-  Serial.print(type);
-  Serial.print(", this=0x");
-  Serial.println((unsigned long)this, HEX);
-
+  
+  // Null pointer handling
   if (!this) {
-    Serial.println("[ERROR] this pointer is NULL in webSocketEvent!");
-    return;
-  }
-
-  Serial.print("[webSocketEvent] webSocketstatus=0x");
-  Serial.println((unsigned long)this->webSocketstatus, HEX);
+    Serial.println("[ERROR] this pointer is NULL in webSocketEvent!"); return;}
 
   switch(type) {
     case WStype_DISCONNECTED:

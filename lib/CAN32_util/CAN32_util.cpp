@@ -2,10 +2,10 @@
 #include <driver/twai.h>
 #include "CAN32_util.h"
 
-uint8_t pdmslimit = 100;
+uint8_t pdmslimit = 1;
 
 // No BUS ID Filter (Accept all)
-void CAN32_initCANBus(int can_tx,int can_rx, bool readyflag,twai_timing_config_t t_config) {
+void CAN32_initCANBus(int can_tx,int can_rx, bool &readyflag,twai_timing_config_t t_config) {
   Serial.println("--- CAN Bus Initialization ---");
   Serial.print("Initializing CAN bus...");
   
@@ -33,7 +33,7 @@ void CAN32_initCANBus(int can_tx,int can_rx, bool readyflag,twai_timing_config_t
   Serial.println();
 }
 // With BUS ID Filter
-void CAN32_initCANBus(int can_tx,int can_rx, bool readyflag,
+void CAN32_initCANBus(int can_tx,int can_rx, bool &readyflag,
                 twai_timing_config_t t_config, twai_filter_config_t f_config) {
   Serial.println("--- CAN Bus Initialization ---");
   Serial.print("Initializing CAN bus...");
