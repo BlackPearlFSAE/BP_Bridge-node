@@ -11,7 +11,7 @@ void SD32_getSDsize(){
   Serial.printf("SD Card Size: %lluMB\n", cardSize);
 }
 
-void SD32_initSDCard(int sd_sck, int sd_miso, int sd_mosi, int sd_cs,bool &sdCardReady) {
+void SD32_initSDCard(int sd_sck, int sd_miso, int sd_mosi, int sd_cs,bool &sdCardReady) { 
   Serial.println("--- SD Card Initialization ---");
   Serial.print("Initializing SD card...");
   SPI.begin(sd_sck, sd_miso, sd_mosi, sd_cs);
@@ -43,15 +43,6 @@ void SD32_initSDCard(int sd_sck, int sd_miso, int sd_mosi, int sd_cs,bool &sdCar
   
   uint64_t cardSize = SD.cardSize() / (1024 * 1024);
   Serial.printf("Card Size: %lluMB\n", cardSize);
-  
-
-  // Let's leave this to the devs to decided
-  // // Generate unique filename for this session
-  // SD32_generateUniqueFilename(csvFil);
-  
-  // // Create new CSV file
-  // Serial.println("Creating new CSV file...");
-  // SD_32createCSVFile();
 }
 
 void SD32_createCSVFile(char* csvFilename, const char* csvHeader){

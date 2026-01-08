@@ -341,3 +341,27 @@ void scanBamocarIDs() {
     
     return 25.0; // Default fallback
   }
+
+
+  // --- BAMOCAR D3 400 MOCK DATA ---
+void mockBAMOCarData(BAMOCar *BamoCar) {
+  // Motor temperatures (30-80°C range)
+  BamoCar->motorTemp1 = 55.0 + random(-10, 15);
+  BamoCar->motorTemp2 = BamoCar->motorTemp1 + random(5, 10);
+  BamoCar->motorTempValid = true;
+
+  // Controller temperature (30-70°C range)
+  BamoCar->controllerTemp = 50.0 + random(-10, 15);
+  BamoCar->controllerTempValid = true;
+
+  // DC Link Voltage (200-240V range for typical EV)
+  BamoCar->canVoltage = 220.0 + random(-20, 20);
+  BamoCar->canVoltageValid = true;
+
+  // DC Current (0-100A range)
+  BamoCar->canCurrent = 30.0 + random(-10, 50);
+  BamoCar->canCurrentValid = true;
+
+  // Calculated power (V * I)
+  BamoCar->power = BamoCar->canVoltage * BamoCar->canCurrent;
+}

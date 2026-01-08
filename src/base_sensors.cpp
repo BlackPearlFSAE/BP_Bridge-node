@@ -1,8 +1,5 @@
-
 #include <Arduino.h>
 #include <base_sensors.h>
-
-
 
 // ISR shared variable
 volatile int counterL = 0;
@@ -117,4 +114,35 @@ void ElectSensorsUpdate(Electrical *ElectSensors, int* pinArrays){
   ElectSensors->IMD_OK = digitalRead(pinArrays[5]);
   ElectSensors->HV_ON = digitalRead(pinArrays[6]);
   ElectSensors->BSPD_OK = digitalRead(pinArrays[7]);
+}
+
+
+// --- MECHANICAL SENSORS MOCK DATA ---
+void mockMechanicalData(Mechanical *MechSensors) {
+  // Simulate wheel RPM (0-500 RPM range with some variation)
+  MechSensors->Wheel_RPM_L = 250.0 + random(-50, 50);
+  MechSensors->Wheel_RPM_R = 245.0 + random(-50, 50);
+
+  // Simulate stroke sensors (0-75mm range)
+  MechSensors->STR_Heave_mm = 35.0 + random(-10, 10);
+  MechSensors->STR_Roll_mm = 40.0 + random(-10, 10);
+}
+
+// --- ELECTRICAL SENSORS MOCK DATA ---
+void mockElectricalData(Electrical *ElectSensors) {
+  // Simulate current sensor (-20A to +20A range)
+  ElectSensors->I_SENSE = 5.0 + random(-20, 80) / 10.0;
+
+  // Simulate temperature (20-80°C range)
+  ElectSensors->TMP = 45.0 + random(-10, 20);
+
+  // Simulate APPS and BPPS positions (0-75mm range)
+  ElectSensors->APPS = 30.0 + random(-15, 30);
+  ElectSensors->BPPS = 10.0 + random(-5, 15);
+
+  // Simulate digital fault status (mostly OK, occasional faults)
+  ElectSensors->AMS_OK = random(0, 10) > 1;    // 90% OK
+  ElectSensors->IMD_OK = random(0, 10) > 1;    // 90% OK
+  ElectSensors->HV_ON = random(0, 10) > 2;     // 80% ON
+  ElectSensors->BSPD_OK = random(0, 10) > 1;   // 90% OK
 }

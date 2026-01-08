@@ -18,7 +18,6 @@
 #include <syncTime_util.h> 
 #include <CAN32_util.h>
 #include <WIFI32_util.h>
-#include <bamo_helper.h>
 #include <motion_sensors.h>
 #include <base_sensors.h>
 // ============================================================================
@@ -54,6 +53,9 @@ bool I2C2_connect = 0;
 #define SD_MISO_PIN 13
 #define SD_SCK_PIN 12
 
+// ---- UART
+#define UART0_BAUD 115200
+
 bool sdCardReady = false;
 unsigned long lastSDLog = 0;
 int dataPoint = 0;
@@ -75,7 +77,6 @@ void append_ElectData_toCSVFile(File& dataFile, void* data);
 void append_OdometryData_toCSVFile(File& dataFile, void* data);
 void append_BAMOdata_toCSVFile(File& dataFile, void* data);
 
-
 // -- CAN Bus config
 #define CAN_TX_PIN 48  // GPIO48 for CAN TX
 #define CAN_RX_PIN 47  // GPIO47 for CAN RX
@@ -84,15 +85,7 @@ void append_BAMOdata_toCSVFile(File& dataFile, void* data);
 // --- Debugger
 void showDeviceStatus();
 
-// ============================================================================
-// BAMOCar CONFIGURATION
-// ============================================================================
-#define BAMOCarREQ_INTERVAL 200 // Request every 200ms
-
-// CAN Bus timing and control variables
 bool canBusReady;
-unsigned long lastBAMOrequest = 0;
-uint8_t CANRequest_sequence = 0;  // 0=motor temp, 1=controller temp, 2=voltage, 3=current
 
 // ============================================================================
 // SENSORS CONFIGURATION
@@ -117,6 +110,17 @@ unsigned long RPM_CalcInterval = 100; // 100 ms
 #define IMD_OK_PIN 38
 #define HV_ON_PIN 35
 #define BSPD_OK_PIN 36
+
+int ElectPinArray[8] = {
+  I_SENSE_PIN,
+  TMP_PIN,
+  APPS_PIN,
+  BPPS_PIN,
+  AMS_OK_PIN,
+  IMD_OK_PIN,
+  HV_ON_PIN,
+  BSPD_OK_PIN
+};
 
 // --- GPS (TinyGPS++ ANsH51 GNSS) ---
 #define GPS_RX_PIN 2  // Connect to GPS TX
@@ -146,8 +150,6 @@ String   RTC_getISO();
 // ============================================================================
 // BPMObile SENSOR PUBLISHING
 // ============================================================================
-const float BAMO_POWER_SAMPLING_RATE = 2.0;     // 2 Hz for BAMOPower data
-const float BAMO_TEMP_SAMPLING_RATE = 1.0;      // 1 Hz for BAMOTemp data to BP Mobile
 
 // Add RPM and Stroke sampling rates
 const float MECH_SENSORS_SAMPLING_RATE = 2.0;    // 2 Hz for wheel RPM publish
@@ -155,23 +157,15 @@ const float ELECT_SENSORS_SAMPLING_RATE = 2.0;    // 2 Hz for Elect_SENSOR
 const float ELECT_FAULT_STAT_SAMPLING_RATE = 1.0;   // 1 Hz period for Elect_Faukt stat
 
 // Data publishing functions
-void publishBAMOpower(BAMOCar* bamocar);
-void publishBAMOtemp(BAMOCar* bamocar);
 void publishMechData(Mechanical* MechSensors);
 void publishElectData(Electrical* ElectSensors);
 void publishElectFaultState(Electrical* ElectSensors);
 void registerClient(const char* clientName);
 // Publish timers for different data streams
-unsigned long lastBAMOsend_power = 0;
-unsigned long lastBAMOsend_temp = 0;
 unsigned long lastMechSend = 0;
 unsigned long lastElectSend = 0;
 unsigned long lastElectFaultSend = 0;
 unsigned long lastOdometrySend = 0;
-void mockMechanicalData(Mechanical *MechSensors);
-void mockElectricalData(Electrical *ElectSensors);
-void mockOdometryData(Odometry *OdomSensors);
-void mockBAMOCarData(BAMOCar *BamoCar);
 
 // Unix timestamp in ms (from ANY source: RTC/NTP/Server)
 uint64_t DEVICE_UNIX_TIME = 0;  
@@ -182,20 +176,11 @@ hw_timer_t *My_timer = nullptr;
 // SETUP
 // ============================================================================
 
-int ElectPinArray[8] = {
-  I_SENSE_PIN,
-  TMP_PIN,
-  APPS_PIN,
-  BPPS_PIN,
-  AMS_OK_PIN,
-  IMD_OK_PIN,
-  HV_ON_PIN,
-  BSPD_OK_PIN
-};
+bool MockFlag = 0;
 
 void setup() {
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); //disable brownout detector
-  Serial.begin(115200);
+  Serial.begin(UART0_BAUD);
 
   (Wire1.begin(I2C1_SDA,I2C1_SCL)) ? I2C1_connect=1 : I2C1_connect=0 ;
   (Wire.begin(I2C2_SDA,I2C2_SCL)) ? I2C2_connect =1 : I2C2_connect=0 ;
@@ -212,18 +197,13 @@ void setup() {
   // Separated I2C bus
   RTCavailable = RTCinit(&Wire1);
   IMUavailable = IMUinit(&Wire,mpu);
-  // // Calibrate IMU sensor in 1s, please position it well in the vehicle
-  delay(1000); IMUcalibrate(mpu,IMUavailable);
-  
+  delay(1000); IMUcalibrate(mpu,IMUavailable); // 1 sec Calibrate
   GPSavailable = GPSinit(gpsSerial,GPS_TX_PIN,GPS_RX_PIN,GPS_BAUD); 
 
-  // เดะจะเปลี่ยนใหม่มาใส่ในนี้ละ ชั้นจะไม่แยก Library และจะไม่เขียน glabal ให้มากความ
-  // ก็เลยเขียนฟังก์ชั้นพวกนี้ให้เป็นแบบรับ Parameter
   // Initialize all Mechanical and Electrical sensor
   RPMinit_withExtPullUP(ENCODER_PINL,ENCODER_PINR); 
   RPM_setCalcPeriod(My_timer, 100); 
   StrokesensorInit(STR_Heave,STR_Roll);
-  // Pin array here
   ElectSensorsInit(ElectPinArray);
   
   // Initialize SD Card with SD32_util
@@ -251,7 +231,6 @@ void setup() {
   // Sync device time with RTC on startup (in second scale)
   RTCcalibrate(); // Calibrate with Latest Date (Comment out after use)
   syncTime_setAbsolute(DEVICE_UNIX_TIME,1000000000000ULL /*RTC_getUnix()*/ );
-  // The Flag is set
   Serial.print("Device time synced with RTC: "); Serial.println(RTC_getISO());
 
   Serial.println("==================================================");
@@ -263,7 +242,7 @@ void setup() {
 // ============================================================================
 // MAIN LOOP
 // ============================================================================
-bool MockFlag = 0;
+
 void loop() {
 
   uint32_t SESSION_TIME = millis(); // Now
@@ -271,19 +250,13 @@ void loop() {
   // Resync if DeviceTime drifted from CURRENT_TIME by 1 sec
   // if (!syncTime_isSynced()) {
   //   syncTime_resync(DEVICE_UNIX_TIME,RELATIVE_UNIX_TIME,1000);
-  //   // I think there should just be a method to check without relying on
-  //   // setAbsoluteTime
-  //   // Just a method to compare time drift , then sync either (DeviceTime)
-  //   // and Either Sync Local time source with server or NTP
-  //   // Okay so I think the DeviceTime should just represent the RTC,
-  //   // And Timesource should just be external
   // }
+
   // Init Temp struct per mcu loop
   twai_message_t txmsg; twai_message_t rxmsg;   
   Mechanical myMechData;
   Electrical myElectData;
   Odometry myOdometryData;
-  BAMOCar myBAMOCar;
 
   // Handle WebSocket communication 
   if (WiFi.status() == WL_CONNECTED) BPwebSocket->loop();
@@ -291,54 +264,22 @@ void loop() {
   // return;
 
   // Update WiFi LED status
-  // (WiFi.status() == WL_CONNECTED)? digitalWrite(WIFI_LED,1):digitalWrite(WIFI_LED,0);
-  // (BPsocketstatus->isConnected == true)? digitalWrite(WS_LED,1):digitalWrite(WS_LED,0);
+  (WiFi.status() == WL_CONNECTED)? digitalWrite(WIFI_LED,1):digitalWrite(WIFI_LED,0);
+  (BPsocketstatus->isConnected == true)? digitalWrite(WS_LED,1):digitalWrite(WS_LED,0);
   
- 
   // Update Each Sensors
   RPMsensorUpdate(&myMechData, RPM_CalcInterval ,ENCODER_N); 
   StrokesensorUpdate(&myMechData,STR_Heave,STR_Roll);
   ElectSensorsUpdate(&myElectData,ElectPinArray);
   GPSupdate(&myOdometryData,gpsSerial,gps); IMUupdate(&myOdometryData,mpu,IMUavailable);
   
-  if (canBusReady) {
-    // Receive and process BAMOCar d3 400 CAN frame
-    if(CAN32_receiveCAN(&rxmsg) == ESP_OK) process_ResponseBamocarMsg(&rxmsg, &myBAMOCar);
-    // else {Serial.println("BAMO RX Buffer = 0"); delay(100);}
-
-    // Request CAN data RPM_calc_intervalically
-    // Will cycle: 0 = motor temp, 1 = controller temp, 2 = DC voltage, 3 = DC current
-    if (SESSION_TIME - lastBAMOrequest >= BAMOCarREQ_INTERVAL) {
-      // switch (CANRequest_sequence) {
-      //   case 0:
-      //     pack_RequestBamocarMsg(&txmsg,BAMOCAR_REG_MOTOR_TEMP);      // 0x49
-      //     if(CAN32_sendCAN(&txmsg) == ESP_OK); Serial.println("Motor_Temp Request success"); 
-      //     break;
-      //   case 1:
-      //     pack_RequestBamocarMsg(&txmsg,BAMOCAR_REG_CONTROLLER_TEMP); // 0x4A
-      //     if(CAN32_sendCAN(&txmsg) == ESP_OK); Serial.println("Controller_Temp Request success");
-      //     break;
-      //   case 2:
-      //     pack_RequestBamocarMsg(&txmsg,BAMOCAR_REG_DC_VOLTAGE);      // 0xEB (CORRECTED!)
-      //     if(CAN32_sendCAN(&txmsg) == ESP_OK); Serial.println("Motor_rmsVoltage Request success");
-      //     break;
-      //   case 3:
-      //     pack_RequestBamocarMsg(&txmsg,BAMOCAR_REG_DC_CURRENT);      // 0x20 (CORRECTED!)
-      //     CAN32_sendCAN(&txmsg); Serial.println("Motor_rmsCurrent Request success");
-      //     break;
-      // }
-      // CANRequest_sequence++;
-      decodeBAMO_rawmsg(rxmsg);
-      lastBAMOrequest = millis();
-    
-      if (CANRequest_sequence > 3) CANRequest_sequence = 0;
-    }
+  // if (canBusReady) {
+  //   // Receive and process BAMOCar d3 400 CAN frame
+  //   if(CAN32_receiveCAN(&rxmsg) == ESP_OK) {break;/* Message processor function */}
+  //   // else {Serial.println("BAMO RX Buffer = 0");}
+  //   }
+  // }
   
-  }
-  // Calculate power
-  if (myBAMOCar.canVoltageValid && myBAMOCar.canCurrentValid) {
-    myBAMOCar.power = myBAMOCar.canVoltage * myBAMOCar.canCurrent;
-  }
 
   // if(MockFlag){
   //   mockMechanicalData(&myMechData);mockElectricalData(&myElectData);
@@ -355,7 +296,6 @@ void loop() {
       append_MechData_toCSVFile,
       append_ElectData_toCSVFile,
       append_OdometryData_toCSVFile,
-      append_BAMOdata_toCSVFile
     };
     void *structArray[appenderCount] = {
       &RELATIVE_UNIX_TIME,
@@ -364,7 +304,6 @@ void loop() {
       &myMechData,
       &myElectData,
       &myOdometryData,
-      &myBAMOCar
     };
 
     logDataToSD(csvFilename, appenders, structArray, appenderCount);
@@ -374,16 +313,6 @@ void loop() {
   }
 
   if (BPsocketstatus->isRegistered && BPsocketstatus->isConnected) {
-    // Publish BAMOcar power data▲
-    if (SESSION_TIME - lastBAMOsend_power >= (1000.0 / BAMO_POWER_SAMPLING_RATE)) {
-      publishBAMOpower(&myBAMOCar);
-      lastBAMOsend_power = SESSION_TIME;
-    }
-    // Publish temperature data
-    if (SESSION_TIME - lastBAMOsend_temp >= (1000.0 / BAMO_TEMP_SAMPLING_RATE)) {
-      publishBAMOtemp(&myBAMOCar);
-      lastBAMOsend_temp = SESSION_TIME;
-    }
     // Send Mechanical data
     if (SESSION_TIME - lastMechSend >= (1000.0 / MECH_SENSORS_SAMPLING_RATE)) {
       publishMechData(&myMechData);
@@ -401,7 +330,6 @@ void loop() {
     }
   }
  
-  // delay(10); // Prevent watchdog issues (also prevent CAN fast sequential req)
 }
 
 // ****************************************************************************
@@ -409,7 +337,6 @@ void loop() {
 // ============================================================================
 // WIFI , DEVICE , BPMobile Publishing
 // ============================================================================
-
 
 
 void showDeviceStatus() {
@@ -458,101 +385,6 @@ void showDeviceStatus() {
   (gpsSerial.available() > 0) ? Serial.println("✓ DISCOVERED") : Serial.println("✗ NOT AVAILABLE");
 
   Serial.println("╠═════════════════════════════════════════════╣");
-}
-
-// Publish Voltage, Current , Power consumption
-void publishBAMOpower(BAMOCar* bamocar) {
-  unsigned long long unixTimestamp = syncTime_getRelative(DEVICE_UNIX_TIME);
-
-  if (unixTimestamp < 1000000000000ULL) return;
-
-  // Send CAN voltage
-  if (bamocar->canVoltageValid) {
-    JsonDocument voltDoc;
-    voltDoc["type"] = "data";
-    voltDoc["topic"] = "power/can_voltage";
-    voltDoc["data"]["value"] = bamocar->canVoltage;
-    voltDoc["data"]["sensor_id"] = "BAMOCAR_CAN";
-    voltDoc["timestamp"] = unixTimestamp;
-
-    String voltMsg;
-    serializeJson(voltDoc, voltMsg);
-    BPwebSocket->sendTXT(voltMsg);
-  }
-
-  // Send CAN current
-  if (bamocar->canCurrentValid) {
-    JsonDocument currDoc;
-    currDoc["type"] = "data";
-    currDoc["topic"] = "power/can_current";
-    currDoc["data"]["value"] = bamocar->canCurrent;
-    currDoc["data"]["sensor_id"] = "BAMOCAR_CAN";
-    currDoc["timestamp"] = unixTimestamp;
-
-    String currMsg;
-    serializeJson(currDoc, currMsg);
-    BPwebSocket->sendTXT(currMsg);
-  }
-
-  // Send calculated power
-  JsonDocument powDoc;
-  powDoc["type"] = "data";
-  powDoc["topic"] = "power/power";
-  powDoc["data"]["value"] = bamocar->power;
-  powDoc["data"]["sensor_id"] = "CALCULATED";
-  powDoc["timestamp"] = unixTimestamp;
-
-  String powMsg;
-  serializeJson(powDoc, powMsg);
-  BPwebSocket->sendTXT(powMsg);
-
-  Serial.print("[BP Mobile] Power: V=");
-  Serial.print(bamocar->canVoltage, 2);
-  Serial.print("V, I=");
-  Serial.print(bamocar->canCurrent, 3);
-  Serial.print("A, P=");
-  Serial.print(bamocar->power, 2);
-  Serial.println("W");
-}
-// Publihs controller, and sensed Motor temp
-void publishBAMOtemp(BAMOCar* bamocar) {
-  unsigned long long unixTimestamp = syncTime_getRelative(DEVICE_UNIX_TIME);
-  // timeout function
-  if (unixTimestamp < 1000000000000ULL) return;
-
-  // Send motor temperature
-  if (bamocar->motorTempValid) {
-    JsonDocument motorDoc;
-    motorDoc["type"] = "data";
-    motorDoc["topic"] = "motor/temperature";
-    motorDoc["data"]["value"] = bamocar->motorTemp2;
-    motorDoc["data"]["sensor_id"] = "BAMOCAR_MOTOR";
-    motorDoc["timestamp"] = unixTimestamp;
-
-    String motorMsg;
-    serializeJson(motorDoc, motorMsg);
-    BPwebSocket->sendTXT(motorMsg);
-  }
-
-  // Send controller temperature
-  if (bamocar->controllerTempValid) {
-    JsonDocument ctrlDoc;
-    ctrlDoc["type"] = "data";
-    ctrlDoc["topic"] = "motor/controller_temperature";
-    ctrlDoc["data"]["value"] = bamocar->controllerTemp;
-    ctrlDoc["data"]["sensor_id"] = "BAMOCAR_CTRL";
-    ctrlDoc["timestamp"] = unixTimestamp;
-
-    String ctrlMsg;
-    serializeJson(ctrlDoc, ctrlMsg);
-    BPwebSocket->sendTXT(ctrlMsg);
-
-    Serial.print("[BP Mobile] CAN Temps: Motor=");
-    Serial.print(bamocar->motorTemp2, 1);
-    Serial.print("°C, Controller=");
-    Serial.print(bamocar->controllerTemp, 1);
-    Serial.println("°C");
-  }
 }
 
 void publishMechData(Mechanical* MechSensors) {
@@ -739,11 +571,6 @@ void registerClient(const char* clientName) {
   
   // Define topics
   JsonArray topics = doc["topics"].to<JsonArray>();
-  topics.add("power/can_voltage");
-  topics.add("power/can_current");
-  topics.add("power/power");
-  topics.add("motor/temperature");
-  topics.add("motor/controller_temperature");
   topics.add("wheel/left_rpm");
   topics.add("wheel/right_rpm");
   topics.add("sensors/stroke_Heave_distanceMM");
@@ -759,36 +586,6 @@ void registerClient(const char* clientName) {
 
   // Define topic metadata
   JsonObject metadata = doc["topic_metadata"].to<JsonObject>();
-  
-  // CAN Voltage metadata
-  JsonObject canVoltMeta = metadata["power/can_voltage"].to<JsonObject>();
-  canVoltMeta["description"] = "DC Link Voltage (Bamocar CAN)";
-  canVoltMeta["unit"] = "V";
-  canVoltMeta["sampling_rate"] = BAMO_TEMP_SAMPLING_RATE;
-  
-  // CAN Current metadata
-  JsonObject canCurrMeta = metadata["power/can_current"].to<JsonObject>();
-  canCurrMeta["description"] = "Motor DC Current (Bamocar CAN)";
-  canCurrMeta["unit"] = "A";
-  canCurrMeta["sampling_rate"] = BAMO_TEMP_SAMPLING_RATE;
-  
-  // Power metadata
-  JsonObject powMeta = metadata["power/power"].to<JsonObject>();
-  powMeta["description"] = "Power consumption (calculated)";
-  powMeta["unit"] = "W";
-  powMeta["sampling_rate"] = BAMO_POWER_SAMPLING_RATE;
-  
-  // Motor temperature metadata
-  JsonObject motorTempMeta = metadata["motor/temperature"].to<JsonObject>();
-  motorTempMeta["description"] = "Motor temperature (Bamocar)";
-  motorTempMeta["unit"] = "°C";
-  motorTempMeta["sampling_rate"] = BAMO_TEMP_SAMPLING_RATE;
-  
-  // Controller temperature metadata
-  JsonObject ctrlTempMeta = metadata["motor/controller_temperature"].to<JsonObject>();
-  ctrlTempMeta["description"] = "Motor controller/IGBT temperature (Bamocar)";
-  ctrlTempMeta["unit"] = "°C";
-  ctrlTempMeta["sampling_rate"] = BAMO_TEMP_SAMPLING_RATE;
 
   // Wheel RPM metadata
   JsonObject leftRpmMeta = metadata["wheel/left_rpm"].to<JsonObject>();
@@ -918,31 +715,6 @@ void append_Timestamp_toCSVFile(File& dataFile, void* data) {
   dataFile.print(",");
 }
 
-// BAMOCar Appender - writes motor controller data from CAN bus
-void append_BAMOdata_toCSVFile(File& dataFile, void* data) {
-  BAMOCar* bamocar = static_cast<BAMOCar*>(data);
-
-  // Write CAN voltage
-    dataFile.print((bamocar->canVoltageValid) ? bamocar->canVoltage : 0.0, 2);
-    dataFile.print(",");
-
-    // Write CAN current
-    dataFile.print((bamocar->canCurrentValid) ? bamocar->canCurrent : 0.0, 2);
-    dataFile.print(",");
-
-    // Write power
-    dataFile.print(bamocar->power, 2);
-    dataFile.print(",");
-
-    // Write motor temperature
-    dataFile.print((bamocar->motorTempValid) ? bamocar->motorTemp2 : 0.0, 1);
-    dataFile.print(",");
-
-    // Write controller temperature
-    dataFile.print((bamocar->controllerTempValid) ? bamocar->controllerTemp : 0.0, 1);
-    dataFile.print(",");
-}
-
 // Mechanical Sensors Appender - writes wheel RPM and stroke sensor data
 void append_MechData_toCSVFile(File& dataFile, void* data) {
   Mechanical* MechSensors = static_cast<Mechanical*>(data);
@@ -1016,80 +788,4 @@ void append_OdometryData_toCSVFile(File& dataFile, void* data) {
   dataFile.print(",");
   dataFile.print(OdomSensors->imu_gyroz, 3);
   dataFile.print(",");
-}
-
-// ============================================================================
-// MOCK DATA FUNCTIONS FOR TESTING
-// ============================================================================
-// --- MECHANICAL SENSORS MOCK DATA ---
-void mockMechanicalData(Mechanical *MechSensors) {
-  // Simulate wheel RPM (0-500 RPM range with some variation)
-  MechSensors->Wheel_RPM_L = 250.0 + random(-50, 50);
-  MechSensors->Wheel_RPM_R = 245.0 + random(-50, 50);
-
-  // Simulate stroke sensors (0-75mm range)
-  MechSensors->STR_Heave_mm = 35.0 + random(-10, 10);
-  MechSensors->STR_Roll_mm = 40.0 + random(-10, 10);
-}
-
-// --- ELECTRICAL SENSORS MOCK DATA ---
-void mockElectricalData(Electrical *ElectSensors) {
-  // Simulate current sensor (-20A to +20A range)
-  ElectSensors->I_SENSE = 5.0 + random(-20, 80) / 10.0;
-
-  // Simulate temperature (20-80°C range)
-  ElectSensors->TMP = 45.0 + random(-10, 20);
-
-  // Simulate APPS and BPPS positions (0-75mm range)
-  ElectSensors->APPS = 30.0 + random(-15, 30);
-  ElectSensors->BPPS = 10.0 + random(-5, 15);
-
-  // Simulate digital fault status (mostly OK, occasional faults)
-  ElectSensors->AMS_OK = random(0, 10) > 1;    // 90% OK
-  ElectSensors->IMD_OK = random(0, 10) > 1;    // 90% OK
-  ElectSensors->HV_ON = random(0, 10) > 2;     // 80% ON
-  ElectSensors->BSPD_OK = random(0, 10) > 1;   // 90% OK
-}
-
-// --- ODOMETRY SENSORS MOCK DATA ---
-void mockOdometryData(Odometry *OdomSensors) {
-  // GPS Mock Data (Bangkok area coordinates)
-  OdomSensors->gps_lat = 13.7563 + random(-100, 100) / 10000.0;
-  OdomSensors->gps_lng = 100.5018 + random(-100, 100) / 10000.0;
-  OdomSensors->gps_age = random(0, 1000);
-  OdomSensors->gps_course = random(0, 360);
-  OdomSensors->gps_speed = random(0, 50);  // 0-50 m/s
-
-  // IMU Mock Data (accelerometer in m/s^2)
-  OdomSensors->imu_accelx = random(-100, 100) / 50.0;
-  OdomSensors->imu_accely = random(-100, 100) / 50.0;
-  OdomSensors->imu_accelz = 9.81 + random(-50, 50) / 100.0;
-
-  // IMU Mock Data (gyroscope in deg/s)
-  OdomSensors->imu_gyrox = random(-50, 50) / 10.0;
-  OdomSensors->imu_gyroy = random(-50, 50) / 10.0;
-  OdomSensors->imu_gyroz = random(-50, 50) / 10.0;
-}
-
-// --- BAMOCAR D3 400 MOCK DATA ---
-void mockBAMOCarData(BAMOCar *BamoCar) {
-  // Motor temperatures (30-80°C range)
-  BamoCar->motorTemp1 = 55.0 + random(-10, 15);
-  BamoCar->motorTemp2 = BamoCar->motorTemp1 + random(5, 10);
-  BamoCar->motorTempValid = true;
-
-  // Controller temperature (30-70°C range)
-  BamoCar->controllerTemp = 50.0 + random(-10, 15);
-  BamoCar->controllerTempValid = true;
-
-  // DC Link Voltage (200-240V range for typical EV)
-  BamoCar->canVoltage = 220.0 + random(-20, 20);
-  BamoCar->canVoltageValid = true;
-
-  // DC Current (0-100A range)
-  BamoCar->canCurrent = 30.0 + random(-10, 50);
-  BamoCar->canCurrentValid = true;
-
-  // Calculated power (V * I)
-  BamoCar->power = BamoCar->canVoltage * BamoCar->canCurrent;
 }

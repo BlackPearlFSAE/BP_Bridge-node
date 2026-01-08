@@ -86,3 +86,23 @@ void IMUupdate(Odometry* myimu, MPU6050 mpu ,bool &AvailableFlag){
   myimu->imu_gyroy = mpu.getGyroY();
   myimu->imu_gyroz = mpu.getGyroZ();
 }
+
+// --- ODOMETRY SENSORS MOCK DATA ---
+void mockOdometryData(Odometry *OdomSensors) {
+  // GPS Mock Data (Bangkok area coordinates)
+  OdomSensors->gps_lat = 13.7563 + random(-100, 100) / 10000.0;
+  OdomSensors->gps_lng = 100.5018 + random(-100, 100) / 10000.0;
+  OdomSensors->gps_age = random(0, 1000);
+  OdomSensors->gps_course = random(0, 360);
+  OdomSensors->gps_speed = random(0, 50);  // 0-50 m/s
+
+  // IMU Mock Data (accelerometer in m/s^2)
+  OdomSensors->imu_accelx = random(-100, 100) / 50.0;
+  OdomSensors->imu_accely = random(-100, 100) / 50.0;
+  OdomSensors->imu_accelz = 9.81 + random(-50, 50) / 100.0;
+
+  // IMU Mock Data (gyroscope in deg/s)
+  OdomSensors->imu_gyrox = random(-50, 50) / 10.0;
+  OdomSensors->imu_gyroy = random(-50, 50) / 10.0;
+  OdomSensors->imu_gyroz = random(-50, 50) / 10.0;
+}

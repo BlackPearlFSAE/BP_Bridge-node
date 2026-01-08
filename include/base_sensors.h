@@ -59,3 +59,6 @@ void RPMsensorUpdate(Mechanical *MechSensors,int Period, int encoder_res);
 // --- ELECTRICAL SENSOR FUNCTIONS ---
 void ElectSensorsInit(int* pinArrays);
 void ElectSensorsUpdate(Electrical *ElectSensors,int* pinArrays);
+
+void mockMechanicalData(Mechanical *MechSensors);
+void mockElectricalData(Electrical *ElectSensors);

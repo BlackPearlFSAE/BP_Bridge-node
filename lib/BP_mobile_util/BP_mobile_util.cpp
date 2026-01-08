@@ -19,8 +19,6 @@
 // void setRegisterCallback(RegisterTopicFn cb) { registerClientTopics_fn = cb; }
 // void setTimeProvider(TimeProviderFn fn) {serverSyncTime_fn = fn; }
 
-// socketstatus webSocketstatus;    
-// WebSocketsClient webSocket;
 
 // User calls these in their Arduino Sketch
 void BPMobileConfig::setRegisterCallback(RegisterTopicFn callback) { _registration_cb = callback; }

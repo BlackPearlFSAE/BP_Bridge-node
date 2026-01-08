@@ -39,3 +39,4 @@ float convertKTYtoTemp(uint16_t resistance);
 void decodeBAMO_rawmsg(twai_message_t &message);
 void scanBamocarIDs();
 void analyzeBamoData(uint8_t reg, uint8_t* data);
+void mockBAMOCarData(BAMOCar *BamoCar);
