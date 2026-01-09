@@ -59,20 +59,31 @@ bool I2C2_connect = 0;
 
 bool sdCardReady = false;
 unsigned long lastSDLog = 0;
-int dataPoint = 0;
+unsigned long lastSDClose = 0;  // Track last file close time
+int dataPoint = 1;
 int sessionNumber = 0;
-const unsigned long SD_LOG_INTERVAL = 500; // 0.5s
 
-char* csvFilename = "Default";  // Will be generated at startup with unique name
+// SD Card Timing Configuration (Tiered approach for automotive logging)
+// Append: fast RAM buffer writes
+// Flush: commit to SD (slight blocking)
+// Close: full file close, prevents corruption on long sessions
+const unsigned long SD_APPEND_INTERVAL = 200;   // Append every 200ms
+const unsigned long SD_FLUSH_INTERVAL = 2000;   // Flush every 1 second
+const unsigned long SD_CLOSE_INTERVAL = 60000;  // Close/reopen every 60 seconds (adjust to lap time)
+
+char csvFilename[32] = {0};  // Will be generated at startup with unique name
 // Split CSV headers into modular segments
 const char* header_Timestamp = "DataPoint,UnixTime,SessionTime";
-const char* header_BAMO = "BAMOVolt(V),BAMOAmp(A),BAMOPower(W),MotorTemp(C),BAMOTemp(C)";
 const char* header_Mechanical = "Wheel_RPM_Left,Wheel_RPM_Right,Stroke1_mm,Stroke2_mm";
 const char* header_Electrical = "I_SENSE(A),TMP(C),APPS(%),BPPS(%),AMS_OK,IMD_OK,HV_ON,BSPD_OK";
 const char* header_Odometry = "GPS_Lat,GPS_Lng,GPS_Age,GPS_Course,GPS_Speed,IMU_AccelX,IMU_AccelY,IMU_AccelZ,IMU_GyroX,IMU_GyroY,IMU_GyroZ";
+const char* header_BAMO = "BAMOVolt(V),BAMOAmp(A),BAMOPower(W),MotorTemp(C),BAMOTemp(C)";
 char csvHeaderBuffer[350] = "";
 
+int appenderCount = 7; // increase when scale
+void append_DataPoint_toCSVFile(File& dataFile, void* data);
 void append_Timestamp_toCSVFile(File& dataFile, void* data);
+void append_SessionTime_toCSVFile(File& dataFile, void* data);
 void append_MechData_toCSVFile(File& dataFile, void* data);
 void append_ElectData_toCSVFile(File& dataFile, void* data);
 void append_OdometryData_toCSVFile(File& dataFile, void* data);
@@ -184,23 +195,20 @@ unsigned long lastOdometrySend = 0;
 
 // Unix timestamp in ms (from ANY source: RTC/NTP/Server)
 uint64_t DEVICE_UNIX_TIME = 0;  
-
 hw_timer_t *My_timer = nullptr;
 
 // ============================================================================
 // SETUP
 // ============================================================================
 
-#define MOCK_FLAG 0
-
+#define MOCK_FLAG 1
 
 void setup() {
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); //disable brownout detector
   Serial.begin(UART0_BAUD);
-  // (Wire1.begin(I2C1_SDA,I2C1_SCL)) ? I2C1_connect=1 : I2C1_connect=0 ;
-  // (Wire.begin(I2C2_SDA,I2C2_SCL)) ? I2C2_connect =1 : I2C2_connect=0 ;
-  // Wire1.setTimeout(2); // I2C timeout to be 2 sec
-  // Wire.setTimeout(2);
+  (Wire1.begin(I2C1_SDA,I2C1_SCL)) ? I2C1_connect=1 : I2C1_connect=0 ;
+  (Wire.begin(I2C2_SDA,I2C2_SCL)) ? I2C2_connect =1 : I2C2_connect=0 ;
+  Wire1.setTimeout(2); Wire.setTimeout(2);
 
   pinMode(WIFI_LED, OUTPUT);  pinMode(WS_LED, OUTPUT);
   digitalWrite(WIFI_LED,0);   digitalWrite(WS_LED,0); 
@@ -210,12 +218,11 @@ void setup() {
   TWAI_TIMING_CONFIG_250KBITS(), TWAI_FILTER_CONFIG_ACCEPT_ALL());
   // Separated I2C bus
   RTCavailable = RTCinit(&Wire1);
-  #if MOCK_FLAG == 1
-  IMUavailable = IMUinit(&Wire,mpu);
-  delay(1000); IMUcalibrate(mpu,IMUavailable); // 1 sec Calibrate
-  GPSavailable = GPSinit(gpsSerial,GPS_TX_PIN,GPS_RX_PIN,GPS_BAUD); 
 
-  // Initialize all Mechanical and Electrical sensor
+  #if MOCK_FLAG == 0
+  // IMUavailable = IMUinit(&Wire,mpu);
+  // delay(1000); IMUcalibrate(mpu,IMUavailable); // 1 sec Calibrate
+  GPSavailable = GPSinit(gpsSerial,GPS_TX_PIN,GPS_RX_PIN,GPS_BAUD); 
   RPMinit_withExtPullUP(ENCODER_PINL,ENCODER_PINR); 
   RPM_setCalcPeriod(My_timer, 100); 
   StrokesensorInit(STR_Heave,STR_Roll);
@@ -224,31 +231,28 @@ void setup() {
   
   // Connect to WiFi and Websocket
   initWiFi(ssid,password, /*Atttempt*/ 10);
-  // if (WiFi.status() == WL_CONNECTED) {
-  //   // set a register callback into the websocketEventhandler
-  //   BPMobile.setClientName(clientName);
-  //   BPMobile.setRegisterCallback(registerClient);
-  //   BPMobile.initWebSocket(serverHost,serverPort,clientName);
-  // }
+  if (WiFi.status() == WL_CONNECTED) {
+    // set a register callback into the websocketEventhandler
+    BPMobile.setClientName(clientName); BPMobile.setRegisterCallback(registerClient);
+    BPMobile.initWebSocket(serverHost,serverPort,clientName);
+  }
+  
   // Initialize SD Card with SD32_util
   SD32_initSDCard(SD_SCK_PIN,SD_MISO_PIN,SD_MOSI_PIN,SD_CS_PIN,sdCardReady);
- 
-
-    // ตัวนี้สร้างปัญหาเรื่อง char pointer
-  
-  
   SD32_generateUniqueFilename(sessionNumber,csvFilename); // modify filename to be unique/session
-  Serial.printf("CLIENT NAME BEFORE %s ------- \n",clientName);
 
   strcat(csvHeaderBuffer,header_Timestamp);  strcat(csvHeaderBuffer,",");
   // Can Comment any one of these out
   strcat(csvHeaderBuffer,header_Mechanical); strcat(csvHeaderBuffer,",");
-  strcat(csvHeaderBuffer,header_Electrical); strcat(csvHeaderBuffer,","); 
-  strcat(csvHeaderBuffer,header_Odometry);   strcat(csvHeaderBuffer,","); 
-  strcat(csvHeaderBuffer,header_BAMO);  
+  strcat(csvHeaderBuffer,header_Electrical); strcat(csvHeaderBuffer,",");
+  strcat(csvHeaderBuffer,header_Odometry);   strcat(csvHeaderBuffer,",");
+  strcat(csvHeaderBuffer,header_BAMO);
+  
   // create with unique filename and dynamic header
-  SD32_createCSVFile(csvFilename,csvHeaderBuffer); 
-
+  SD32_createCSVFile(csvFilename,csvHeaderBuffer);
+  
+  // Open persistent file handle for the first time
+  if (sdCardReady) SD32_openPersistentFile(SD, csvFilename);
   
 
   // Sync device time with RTC on startup (in second scale)
@@ -268,13 +272,19 @@ void setup() {
 
 void loop() {
   // showDeviceStatus(); 
-  uint32_t SESSION_TIME = millis(); // Now
-  uint64_t RELATIVE_UNIX_TIME = syncTime_getRelative(DEVICE_UNIX_TIME); // Now Unix
+  uint64_t SESSION_TIME = millis(); // Now
+  // uint64_t CURRENT_RTC_TIME = RTC_getUnix();
+  uint64_t CURRENT_UNIX_TIME = syncTime_getRelative(DEVICE_UNIX_TIME); // Now Unix
+
   // Resync if DeviceTime drifted from CURRENT_TIME by 1 sec
   // if (!syncTime_isSynced()) {
-  //   syncTime_resync(DEVICE_UNIX_TIME,RELATIVE_UNIX_TIME,1000);
+  //   syncTime_resync(DEVICE_UNIX_TIME,CURRENT_UNIX_TIME,1000);
   // }
-  // Serial.println(SESSION_TIME);
+  // // Handle WebSocket communication 
+  if (WiFi.status() == WL_CONNECTED) BPwebSocket->loop();
+    // Update WiFi LED status
+  (WiFi.status() == WL_CONNECTED)? digitalWrite(WIFI_LED,1):digitalWrite(WIFI_LED,0);
+  (BPsocketstatus->isConnected == true)? digitalWrite(WS_LED,1):digitalWrite(WS_LED,0);
 
   // Init Temp struct per mcu loop
   twai_message_t txmsg; twai_message_t rxmsg;   
@@ -282,105 +292,7 @@ void loop() {
   Electrical myElectData;
   Odometry myOdometryData;
   BAMOCar myBAMOCar;
-  return;
-
-  // Handle WebSocket communication 
-  if (WiFi.status() == WL_CONNECTED) BPwebSocket->loop();
-
- // Check for backtick without blocking
-if (Serial.available() && Serial.peek() == '`') {
-  Serial.read();
-  while (1) {
-    showDeviceStatus();
-    if (Serial.available() && Serial.read() == '~') break;
-    delay(200); 
-  }
-}
-  // return;
-
-  // Update WiFi LED status
-  (WiFi.status() == WL_CONNECTED)? digitalWrite(WIFI_LED,1):digitalWrite(WIFI_LED,0);
-  (BPsocketstatus->isConnected == true)? digitalWrite(WS_LED,1):digitalWrite(WS_LED,0);
-  
-  #if MOCK_FLAG == 1
-  // Update Each Sensors
-  RPMsensorUpdate(&myMechData, RPM_CalcInterval ,ENCODER_N); 
-  StrokesensorUpdate(&myMechData,STR_Heave,STR_Roll);
-  ElectSensorsUpdate(&myElectData,ElectPinArray);
-  GPSupdate(&myOdometryData,gpsSerial,gps); IMUupdate(&myOdometryData,mpu,IMUavailable);
-  
-  if (canBusReady) {
-    // Receive and process BAMOCar d3 400 CAN frame
-    if(CAN32_receiveCAN(&rxmsg) == ESP_OK) process_ResponseBamocarMsg(&rxmsg, &myBAMOCar);
-    // else {Serial.println("BAMO RX Buffer = 0");}
-
-    // Request CAN data RPM_calc_intervalically
-    // Will cycle: 0 = motor temp, 1 = controller temp, 2 = DC voltage, 3 = DC current
-    if (SESSION_TIME - lastBAMOrequest >= BAMOCarREQ_INTERVAL) {
-      switch (CANRequest_sequence) {
-        case 0:
-          pack_RequestBamocarMsg(&txmsg,BAMOCAR_REG_MOTOR_TEMP);      // 0x49
-          if(CAN32_sendCAN(&txmsg) == ESP_OK); Serial.println("Motor_Temp Request success"); 
-          break;
-        case 1:
-          pack_RequestBamocarMsg(&txmsg,BAMOCAR_REG_CONTROLLER_TEMP); // 0x4A
-          if(CAN32_sendCAN(&txmsg) == ESP_OK); Serial.println("Controller_Temp Request success");
-          break;
-        case 2:
-          pack_RequestBamocarMsg(&txmsg,BAMOCAR_REG_DC_VOLTAGE);      // 0xEB (CORRECTED!)
-          if(CAN32_sendCAN(&txmsg) == ESP_OK); Serial.println("Motor_rmsVoltage Request success");
-          break;
-        case 3:
-          pack_RequestBamocarMsg(&txmsg,BAMOCAR_REG_DC_CURRENT);      // 0x20 (CORRECTED!)
-          CAN32_sendCAN(&txmsg); Serial.println("Motor_rmsCurrent Request success");
-          break;
-      }
-      CANRequest_sequence++;
-      decodeBAMO_rawmsg(rxmsg);
-      lastBAMOrequest = SESSION_TIME;
-    
-      if (CANRequest_sequence > 3) CANRequest_sequence = 0;
-    }
-  
-  }
-  // Calculate power
-  if (myBAMOCar.canVoltageValid && myBAMOCar.canCurrentValid) {
-    myBAMOCar.power = myBAMOCar.canVoltage * myBAMOCar.canCurrent;
-  }
-  #endif
-
-  mockMechanicalData(&myMechData);mockElectricalData(&myElectData);
-  mockOdometryData(&myOdometryData);mockBAMOCarData(&myBAMOCar); 
-  
-  
-  // Log to SD card
-  if (sdCardReady && (SESSION_TIME - lastSDLog >= SD_LOG_INTERVAL)) {
-    int appenderCount = 6; // increase when scale
-    AppenderFunc appenders[appenderCount] = {
-      append_Timestamp_toCSVFile, // For UNIX_TIME
-      append_Timestamp_toCSVFile, // Reuse for SESSION_TIME
-      // Comment below to toggle off
-      append_MechData_toCSVFile,
-      append_ElectData_toCSVFile,
-      append_OdometryData_toCSVFile,
-      append_BAMOdata_toCSVFile
-    };
-    void *structArray[appenderCount] = {
-      &RELATIVE_UNIX_TIME,
-      &SESSION_TIME,
-      // Comment below to toggle off
-      &myMechData,
-      &myElectData,
-      &myOdometryData,
-      &myBAMOCar
-    };
-
-    logDataToSD(csvFilename, appenders, structArray, appenderCount);
-    dataPoint++;
-    Serial.print("[SD Card] Logged data point #"); Serial.println(dataPoint - 1);
-    
-    lastSDLog = SESSION_TIME;
-  }
+  // /*
 
   if (BPsocketstatus->isRegistered && BPsocketstatus->isConnected) {
     // Publish BAMOcar power data▲
@@ -409,15 +321,119 @@ if (Serial.available() && Serial.peek() == '`') {
       lastElectFaultSend = SESSION_TIME;
     }
   }
- 
+
+  // */
+
+ // Check for backtick without blocking
+  if (Serial.available() && Serial.peek() == '`') {
+    Serial.read();
+    while (1) {
+      showDeviceStatus();
+      if (Serial.available() && Serial.read() == '~') break;
+      delay(200); 
+    }
+  }
+  
+  #if MOCK_FLAG == 0
+  // Update Each Sensors
+  RPMsensorUpdate(&myMechData, RPM_CalcInterval ,ENCODER_N); StrokesensorUpdate(&myMechData,STR_Heave,STR_Roll);
+  ElectSensorsUpdate(&myElectData,ElectPinArray);
+  GPSupdate(&myOdometryData,gpsSerial,gps,GPSavailable); 
+  // IMUupdate(&myOdometryData,mpu,IMUavailable);
+  
+  if (canBusReady) {
+    // Receive and process BAMOCar d3 400 CAN frame
+    if(CAN32_receiveCAN(&rxmsg) == ESP_OK) process_ResponseBamocarMsg(&rxmsg, &myBAMOCar);
+
+    // Request CAN data RPM_calc_intervalically
+    // Will cycle: 0 = motor temp, 1 = controller temp, 2 = DC voltage, 3 = DC current
+    if (SESSION_TIME - lastBAMOrequest >= BAMOCarREQ_INTERVAL) {
+      switch (CANRequest_sequence) {
+        case 0:
+          pack_RequestBamocarMsg(&txmsg,BAMOCAR_REG_MOTOR_TEMP);      // 0x49
+          if(CAN32_sendCAN(&txmsg) == ESP_OK); 
+          // Serial.println("Motor_Temp Request success"); 
+          break;
+        case 1:
+          pack_RequestBamocarMsg(&txmsg,BAMOCAR_REG_CONTROLLER_TEMP); // 0x4A
+          if(CAN32_sendCAN(&txmsg) == ESP_OK); 
+          // Serial.println("Controller_Temp Request success");
+          break;
+        case 2:
+          pack_RequestBamocarMsg(&txmsg,BAMOCAR_REG_DC_VOLTAGE);      // 0xEB (CORRECTED!)
+          if(CAN32_sendCAN(&txmsg) == ESP_OK); 
+          // Serial.println("Motor_rmsVoltage Request success");
+          break;
+        case 3:
+          pack_RequestBamocarMsg(&txmsg,BAMOCAR_REG_DC_CURRENT);      // 0x20 (CORRECTED!)
+          CAN32_sendCAN(&txmsg); 
+          // Serial.println("Motor_rmsCurrent Request success");
+          break;
+      }
+      CANRequest_sequence++;
+      lastBAMOrequest = SESSION_TIME;
+      if (CANRequest_sequence > 3) CANRequest_sequence = 0;
+    }
+  }
+  // Calculate power
+  if (myBAMOCar.canVoltageValid && myBAMOCar.canCurrentValid)
+    myBAMOCar.power = myBAMOCar.canVoltage * myBAMOCar.canCurrent;
+  #endif
+
+  #if MOCK_FLAG == 1
+  mockMechanicalData(&myMechData);mockElectricalData(&myElectData);
+  mockOdometryData(&myOdometryData);mockBAMOCarData(&myBAMOCar);
+  #endif
+
+  // Check SD card health - close file safely if card removed
+  if (sdCardReady && !SD32_checkSDconnect()) {
+    SD32_closePersistentFile();
+    sdCardReady = false;
+    Serial.println("[SD Card] Card removed - file closed safely");
+  }
+
+  // Periodic file close/reopen (every lap time)
+  if (sdCardReady && SD32_isPersistentFileOpen() && (SESSION_TIME - lastSDClose >= SD_CLOSE_INTERVAL)) {
+    SD32_closePersistentFile();
+    // SD32_generateUniqueFilename(sessionNumber, csvFilename);
+    // SD32_createCSVFile(csvFilename, csvHeaderBuffer);
+    SD32_openPersistentFile(SD, csvFilename);
+    lastSDClose = SESSION_TIME;
+    Serial.printf("[SD Card] File rotated -> %s\n", csvFilename);
+  }
+
+  // Log to SDcard for set interval if SDcard is connected, we use Persistent file opening
+  if (sdCardReady && SD32_isPersistentFileOpen() && (SESSION_TIME - lastSDLog >= SD_APPEND_INTERVAL)) {
+    AppenderFunc appenders[appenderCount] = { // Comment below to toggle off
+      append_DataPoint_toCSVFile,
+      append_Timestamp_toCSVFile,
+      append_SessionTime_toCSVFile,
+      append_MechData_toCSVFile,
+      append_ElectData_toCSVFile,
+      append_OdometryData_toCSVFile,
+      append_BAMOdata_toCSVFile
+    };
+    void *structArray[appenderCount] = { // Comment below to toggle off
+      &dataPoint,
+      &CURRENT_UNIX_TIME,
+      &SESSION_TIME,
+      &myMechData,
+      &myElectData,
+      &myOdometryData,
+      &myBAMOCar
+    };
+    // Use persistent file (no open/close overhead) with timed flush
+    SD32_appendBulkDataPersistent(appenders, structArray, appenderCount, SD_FLUSH_INTERVAL);
+    dataPoint++;
+    Serial.printf("[SD Card] Logged #%d\n", (dataPoint-1));
+    lastSDLog = SESSION_TIME;
+  }
 }
 
-// ****************************************************************************
 
 // ============================================================================
-// WIFI , DEVICE , BPMobile Publishing
+// BPMobile Publishing handler
 // ============================================================================
-
 
 void showDeviceStatus() {
   
@@ -913,17 +929,28 @@ String   RTC_getISO(){
   String SESSION_TIME = rtc.now().timestamp(DateTime::TIMESTAMP_FULL); 
   return SESSION_TIME;
 }
-
 // ============================================================================
 // CSV Data Appender Functions
 // ============================================================================
 // Timestamp Appender - writes Unix timestamp, datetime, and data point counter
-void append_Timestamp_toCSVFile(File& dataFile, void* data) {
-  uint64_t* current_time= (uint64_t*)data;
+void append_DataPoint_toCSVFile(File& dataFile, void* data) {
+  int* datapoint= (int*)data;
   
   dataFile.print(dataPoint);
   dataFile.print(",");
-  dataFile.print(*current_time);
+}
+
+void append_Timestamp_toCSVFile(File& dataFile, void* data) {
+  uint64_t* time= (uint64_t*)data;
+
+  dataFile.print(*time);
+  dataFile.print(",");
+}
+
+void append_SessionTime_toCSVFile(File& dataFile, void* data) {
+  uint64_t* time= (uint64_t*)data;
+  
+  dataFile.print(*time);
   dataFile.print(",");
 }
 
@@ -1025,4 +1052,77 @@ void append_OdometryData_toCSVFile(File& dataFile, void* data) {
   dataFile.print(",");
   dataFile.print(OdomSensors->imu_gyroz, 3);
   dataFile.print(",");
+}
+
+// ============================================================================
+// TELEPLOT SERIAL PRINT FUNCTION - prints all structs in teleplot format
+// ============================================================================
+void printStructsForTeleplot(Mechanical* mech, Electrical* elect, Odometry* odom, BAMOCar* bamocar) {
+  // Mechanical data
+  Serial.print("wheel_rpm_l:");
+  Serial.print(mech->Wheel_RPM_L, 2);
+  Serial.print(" wheel_rpm_r:");
+  Serial.print(mech->Wheel_RPM_R, 2);
+  Serial.print(" heave:");
+  Serial.print(mech->STR_Heave_mm, 2);
+  Serial.print(" roll:");
+  Serial.print(elect->I_SENSE, 2);
+  Serial.print(" ");
+  
+  // Electrical data
+  Serial.print("current:");
+  Serial.print(elect->I_SENSE, 2);
+  Serial.print(" temp:");
+  Serial.print(elect->TMP, 2);
+  Serial.print(" apps:");
+  Serial.print(elect->APPS, 2);
+  Serial.print(" bpps:");
+  Serial.print(elect->BPPS, 2);
+  Serial.print(" ams:");
+  Serial.print(elect->AMS_OK ? 1 : 0);
+  Serial.print(" imd:");
+  Serial.print(elect->IMD_OK ? 1 : 0);
+  Serial.print(" hv:");
+  Serial.print(elect->HV_ON ? 1 : 0);
+  Serial.print(" bspd:");
+  Serial.print(elect->BSPD_OK ? 1 : 0);
+  Serial.print(" ");
+  
+  // Odometry data
+  Serial.print("gps_lat:");
+  Serial.print(odom->gps_lat, 6);
+  Serial.print(" gps_lng:");
+  Serial.print(odom->gps_lng, 6);
+  Serial.print(" gps_speed:");
+  Serial.print(odom->gps_speed, 2);
+  Serial.print(" gps_course:");
+  Serial.print(odom->gps_course, 2);
+  Serial.print(" accel_x:");
+  Serial.print(odom->imu_accelx, 3);
+  Serial.print(" accel_y:");
+  Serial.print(odom->imu_accely, 3);
+  Serial.print(" accel_z:");
+  Serial.print(odom->imu_accelz, 3);
+  Serial.print(" gyro_x:");
+  Serial.print(odom->imu_gyrox, 3);
+  Serial.print(" gyro_y:");
+  Serial.print(odom->imu_gyroy, 3);
+  Serial.print(" gyro_z:");
+  Serial.print(odom->imu_gyroz, 3);
+  Serial.print(" ");
+  
+  // BAMOCar data
+  Serial.print("bamo_motor_temp1:");
+  Serial.print(bamocar->motorTemp1, 2);
+  Serial.print(" bamo_motor_temp2:");
+  Serial.print(bamocar->motorTemp2, 2);
+  Serial.print(" bamo_ctrl_temp:");
+  Serial.print(bamocar->controllerTemp, 2);
+  Serial.print(" bamo_voltage:");
+  Serial.print(bamocar->canVoltage, 2);
+  Serial.print(" bamo_current:");
+  Serial.print(bamocar->canCurrent, 2);
+  Serial.print(" bamo_power:");
+  Serial.print(bamocar->power, 2);
+  Serial.println();
 }

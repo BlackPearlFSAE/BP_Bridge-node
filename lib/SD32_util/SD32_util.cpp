@@ -4,7 +4,13 @@
 #include "SD.h"
 #include "SPI.h"
 #include <SD32_util.h>
-// int dataPoint = 0;
+
+// ============================================================================
+// PERSISTENT FILE HANDLE - Solution 1 & 2
+// ============================================================================
+static File _persistentFile;
+static bool _persistentFileOpen = false;
+static unsigned long _lastFlushTime = 0;
 
 void SD32_getSDsize(){
   uint64_t cardSize = SD.cardSize() / (1024 * 1024);
@@ -43,6 +49,81 @@ void SD32_initSDCard(int sd_sck, int sd_miso, int sd_mosi, int sd_cs,bool &sdCar
   
   uint64_t cardSize = SD.cardSize() / (1024 * 1024);
   Serial.printf("Card Size: %lluMB\n", cardSize);
+}
+
+bool SD32_checkSDconnect(){
+  uint8_t cardType = SD.cardType();
+
+  // If the card is pulled out, cardType will return CARD_NONE (0)
+  if(cardType == CARD_NONE){
+    return false;
+  }
+  return true;
+}
+
+// ============================================================================
+// PERSISTENT FILE FUNCTIONS (Solution 1 & 2)
+// ============================================================================
+
+bool SD32_openPersistentFile(fs::FS &fs, const char* filepath) {
+  if (_persistentFileOpen) {
+    Serial.println("[SD Card] Persistent file already open");
+    return true;
+  }
+
+  _persistentFile = fs.open(filepath, FILE_APPEND);
+  if (!_persistentFile) {
+    Serial.println("[SD Card] ERROR: Could not open persistent file!");
+    _persistentFileOpen = false;
+    return false;
+  }
+
+  _persistentFileOpen = true;
+  _lastFlushTime = millis();
+  Serial.printf("[SD Card] Persistent file opened: %s\n", filepath);
+  return true;
+}
+
+void SD32_closePersistentFile() {
+  if (_persistentFileOpen && _persistentFile) {
+    _persistentFile.flush();
+    _persistentFile.close();
+    _persistentFileOpen = false;
+    Serial.println("[SD Card] Persistent file closed");
+  }
+}
+
+bool SD32_isPersistentFileOpen() {
+  return _persistentFileOpen;
+}
+
+void SD32_flushPersistentFile() {
+  if (_persistentFileOpen && _persistentFile) {
+    _persistentFile.flush();
+    _lastFlushTime = millis();
+  }
+}
+
+void SD32_appendBulkDataPersistent(AppenderFunc* appenders, void** dataArray, size_t count, unsigned long flushIntervalMs) {
+  if (!_persistentFileOpen || !_persistentFile) {
+    Serial.println("[SD Card] ERROR: Persistent file not open!");
+    return;
+  }
+
+  // Write all data using appenders (fast - just RAM buffer)
+  for (size_t i = 0; i < count; i++) {
+    appenders[i](_persistentFile, dataArray[i]);
+  }
+
+  // End CSV line
+  _persistentFile.println();
+
+  // Flush based on time interval (Solution 2)
+  unsigned long now = millis();
+  if (flushIntervalMs == 0 || (now - _lastFlushTime >= flushIntervalMs)) {
+    _persistentFile.flush();
+    _lastFlushTime = now;
+  }
 }
 
 void SD32_createCSVFile(char* csvFilename, const char* csvHeader){
@@ -87,39 +168,20 @@ void SD32_generateUniqueFilename(int &sessionNumber, char* csvFilename) {
       entry = root.openNextFile();
     }
     root.close();
+
   }
   
   // Generate filename with 3-digit session number
-  char buffer[30];
-  sprintf(buffer, "/datalog_%03d.csv", sessionNumber);
-  sprintf(csvFilename,buffer);
+  char buffer[32];
+  snprintf(buffer, sizeof(buffer), "/datalog_%03d.csv", sessionNumber);
+  // Copy into provided destination safely (caller must provide writable buffer)
+  strncpy(csvFilename, buffer, sizeof(buffer) - 1);
+  csvFilename[sizeof(buffer) - 1] = '\0';
 
-  
   Serial.print("Generated unique filename: ");
   Serial.println(csvFilename);
 }
 
-
-// Generic CSV Logging Function
-void logDataToSD(const char* filename, AppenderFunc* appenders, void** dataArray, size_t count) {
-  File dataFile = SD.open(filename, FILE_APPEND);
-
-  if (!dataFile) {
-    Serial.println("[SD Card] ERROR: Could not open file!");
-    return;
-  }
-
-  // Call all appenders
-  for (size_t i = 0; i < count; i++) {
-    appenders[i](dataFile, dataArray[i]);
-  }
-
-  // End CSV line
-  dataFile.println();
-
-  dataFile.flush();
-  dataFile.close();
-}
 
 // List Directory
 void SD32_listDir(fs::FS &fs, const char *dirname, uint8_t levels) {
@@ -173,7 +235,7 @@ void SD32_removeDir(fs::FS &fs, const char *path) {
   }
 }
 
-// read
+// read file
 void SD32_readFile(fs::FS &fs, const char *path) {
   Serial.printf("Reading file: %s\n", path);
 
@@ -190,8 +252,8 @@ void SD32_readFile(fs::FS &fs, const char *path) {
   file.close();
 }
 
-// Write
-void SD32_writeFile(fs::FS &fs, const char *path, const char *message) {
+// Overwrite file
+void SD32_writeFile(fs::FS &fs, const char *path, const char* message) {
   Serial.printf("Writing file: %s\n", path);
 
   File file = fs.open(path, FILE_WRITE);
@@ -199,28 +261,84 @@ void SD32_writeFile(fs::FS &fs, const char *path, const char *message) {
     Serial.println("Failed to open file for writing");
     return;
   }
-  if (file.print(message)) {
-    Serial.println("File written");
-  } else {
+  if (!file.print(message)) 
     Serial.println("Write failed");
-  }
+
   file.close();
 }
 
-// Update
-void SD32_appendFile(fs::FS &fs, const char *path, const char *message) {
-  Serial.printf("Appending to file: %s\n", path);
-
+// Update file at last line
+void SD32_appendFile(fs::FS &fs, const char *path, const char* message) {
   File file = fs.open(path, FILE_APPEND);
   if (!file) {
     Serial.println("Failed to open file for appending");
     return;
   }
-  if (file.print(message)) {
-    Serial.println("Message appended");
-  } else {
+  // The compiler will check if .print() supports type T
+  if (!file.print(message)) {
     Serial.println("Append failed");
   }
+  file.flush();
+  file.close();
+}
+
+void SD32_appendCSV(fs::FS &fs, const char *path, uint64_t &message, bool continueLine) {
+  File file = fs.open(path, FILE_APPEND);
+  if (!file) {
+    Serial.println("Failed to open file for appending");
+    return;
+  }
+  // The compiler will check if .print() supports type T
+  if (!file.print(message)) {
+    Serial.println("Append failed");
+  }
+  file.print(",");
+  if(!continueLine){
+    file.flush();
+    file.close();
+  }
+}
+
+void SD32_appendCSV(fs::FS &fs, const char *path, int &message, bool continueLine) {
+  File file = fs.open(path, FILE_APPEND);
+  if (!file) {
+    Serial.println("Failed to open file for appending");
+    return;
+  }
+  // The compiler will check if .print() supports type T
+  if (!file.print(message)) {
+    Serial.println("Append failed");
+  }
+  file.print(",");
+  if(!continueLine){
+    file.flush();
+    file.close();
+  }
+}
+
+// Log data in bulk
+void SD32_appendBulkDataToCSV(fs::FS &fs,const char* filepath, AppenderFunc* appenders, void** dataArray, size_t count) {
+  // File dataFile = fs.open(filepath, FILE_APPEND);
+  File file = fs.open(filepath, FILE_APPEND);
+  if (!file) {
+    Serial.println("[SD Card] ERROR: Could not open file!");
+    return;
+  }
+  // Call all appenders with safety checks
+  // for (size_t i = 0; i < count; i++) {
+  //   if (!appenders || !appenders[i] || !dataArray || !dataArray[i]) {
+  //     Serial.printf("[SD Card] WARNING: Appender %u has null pointer, skipping\n", i);
+  //     continue;
+  //   }
+  //   appenders[i](file, dataArray[i]);
+  // }
+
+  for (size_t i = 0; i < count; i++)
+    appenders[i](file, dataArray[i]);
+
+  // End CSV line
+  file.println();
+  file.flush();
   file.close();
 }
 

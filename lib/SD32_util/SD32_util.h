@@ -6,13 +6,26 @@ class FS;
 
 // ------- SD CARD LOGGING - APPENDER ARCHITECTURE
 typedef void (*AppenderFunc)(File&, void*);
-void logDataToSD(const char* filename, AppenderFunc* appenders, void** dataArray, size_t count);
-
 void SD32_getSDsize();
 void SD32_initSDCard(int sd_sck, int sd_miso, int sd_mosi, int sd_cs,bool &sdCardReady);
+bool SD32_checkSDconnect();
 
-void SD32_writeFile(fs::FS &fs, const char *path, const char *message);
-void SD32_appendFile(fs::FS &fs, const char *path, const char *message);
+// ------- PERSISTENT FILE HANDLE (Solution 1 & 2) -------
+// Open file once, keep open for continuous logging
+bool SD32_openPersistentFile(fs::FS &fs, const char* filepath);
+void SD32_closePersistentFile();
+bool SD32_isPersistentFileOpen();
+// Append data without opening/closing file each time
+// flushIntervalMs: time between flushes (0 = flush every write, recommended: 2000-5000ms)
+void SD32_appendBulkDataPersistent(AppenderFunc* appenders, void** dataArray, size_t count, unsigned long flushIntervalMs);
+// Force flush (call before power off or SD removal)
+void SD32_flushPersistentFile();
+
+void SD32_writeFile(fs::FS &fs, const char *path, const char* message);
+void SD32_appendFile(fs::FS &fs, const char *path, const char* message);
+void SD32_appendCSV(fs::FS &fs, const char *path, uint64_t &message,bool continueLine);
+void SD32_appendCSV(fs::FS &fs, const char *path, int &message, bool continueLine);
+void SD32_appendBulkDataToCSV(fs::FS &fs,const char* filepath, AppenderFunc* appenders, void** dataArray, size_t count);
 
 void SD32_listDir(fs::FS &fs, const char *dirname, uint8_t levels);
 void SD32_createDir(fs::FS &fs, const char *path);

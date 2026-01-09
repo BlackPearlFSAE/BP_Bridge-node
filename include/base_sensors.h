@@ -3,7 +3,7 @@
 typedef struct{
   // Analog
   float Wheel_RPM_L =0.0;
-  float Wheel_RPM_R =0.0; // Motor temp from NTC thermister or KTY11 
+  float Wheel_RPM_R =0.0;  
   float STR_Heave_mm =0.0; // in mm scale
   float STR_Roll_mm =0.0;
 } Mechanical;

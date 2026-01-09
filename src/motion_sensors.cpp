@@ -5,7 +5,7 @@
 #include <TinyGPS++.h>
 #include <motion_sensors.h>
 
-bool GPSinit(HardwareSerial gpsSerial,int tx,int rx, uint32_t baud) {
+bool GPSinit(HardwareSerial &gpsSerial,int tx,int rx, uint32_t baud) {
   gpsSerial.begin(baud, SERIAL_8N1, rx, tx);
   if(!gpsSerial) return false;
   else { 
@@ -15,7 +15,11 @@ bool GPSinit(HardwareSerial gpsSerial,int tx,int rx, uint32_t baud) {
   }
 }
 
-void GPSupdate(Odometry *mygps, HardwareSerial gpsSerial, TinyGPSPlus gps) {
+void GPSupdate(Odometry *mygps, HardwareSerial &gpsSerial, TinyGPSPlus &gps,bool &AvailableFlag) {
+  if(!AvailableFlag) {
+    Serial.println("GPS isn't available: Can't read");
+    return;
+  }
   while (gpsSerial.available() > 0) {
     if (gps.encode(gpsSerial.read())) {
       Serial.println(F("\n===== GPS Lat lng ====="));

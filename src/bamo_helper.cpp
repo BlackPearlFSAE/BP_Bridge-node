@@ -19,12 +19,12 @@ void pack_RequestBamocarMsg(twai_message_t* msg,uint8_t regAddress) {
   msg->data[2] = 0x00; // Command send once, since we will do request response altogether
   
     // Print register name
-    if (regAddress == BAMOCAR_REG_MOTOR_TEMP) Serial.print("Motor Temp");
-    else if (regAddress == BAMOCAR_REG_CONTROLLER_TEMP) Serial.print("Controller Temp");
-    else if (regAddress == BAMOCAR_REG_DC_VOLTAGE) Serial.print("DC Voltage");
-    else if (regAddress == BAMOCAR_REG_DC_CURRENT) Serial.print("DC Current");
-    else Serial.print("UnkSESSION_TIMEn");
-    Serial.println(")");
+    // if (regAddress == BAMOCAR_REG_MOTOR_TEMP) Serial.print("Motor Temp");
+    // else if (regAddress == BAMOCAR_REG_CONTROLLER_TEMP) Serial.print("Controller Temp");
+    // else if (regAddress == BAMOCAR_REG_DC_VOLTAGE) Serial.print("DC Voltage");
+    // else if (regAddress == BAMOCAR_REG_DC_CURRENT) Serial.print("DC Current");
+    // else Serial.print("UnkSESSION_TIMEn");
+    // Serial.println(")");
 }
 
 // Non Fixed is not request

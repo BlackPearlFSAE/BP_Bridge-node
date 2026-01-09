@@ -19,8 +19,8 @@ typedef struct{
 
 // --- GPS (TinyGPS++ ANsH51 GNSS) ---
 
-bool GPSinit(HardwareSerial gpsSerial,int tx, int rx,uint32_t baud);
-void GPSupdate(Odometry *mygps, HardwareSerial gpsSerial, TinyGPSPlus gps);
+bool GPSinit(HardwareSerial &gpsSerial,int tx, int rx,uint32_t baud);
+void GPSupdate(Odometry *mygps, HardwareSerial &gpsSerial, TinyGPSPlus &gps,bool &AvailableFlag);
 
 // --- IMU (MPU6050) ---
 
