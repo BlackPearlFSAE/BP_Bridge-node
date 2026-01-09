@@ -13,6 +13,11 @@
 #include <MPU6050_light.h>
 #include <TinyGPS++.h>
 
+// FreeRTOS for multi-core task management
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h"
+
 #include <BP_mobile_util.h>
 #include <SD32_util.h>
 #include <syncTime_util.h> 
@@ -38,9 +43,27 @@ WebSocketsClient* BPwebSocket = BPMobile.webSocket;
 socketstatus* BPsocketstatus = BPMobile.webSocketstatus;
 
 // ============================================================================
+// FREERTOS TASK HANDLES
+// ============================================================================
+SemaphoreHandle_t dataMutex = NULL;
+TaskHandle_t wifiTaskHandle = NULL;  // Core 0: WiFi/WebSocket
+TaskHandle_t sdTaskHandle = NULL;    // Core 1: SD card logging
+QueueHandle_t sdQueue = NULL;        // Queue for SD log data
+
+// SD Queue data structure (holds snapshot of all sensor data)
+struct SDLogEntry {
+  int dataPoint;
+  uint64_t unixTime;
+  uint64_t sessionTime;
+  Mechanical mech;
+  Electrical elect;
+  Odometry odom;
+  BAMOCar bamo;
+};
+
+// ============================================================================
 // DEVICE BASE CONFIGURATION (WIFI, I2C, UART, ADC, SPI, SDcard)
 // ============================================================================
-
 #define WIFI_LED 3
 #define WS_LED 4
 
@@ -68,7 +91,7 @@ int sessionNumber = 0;
 // Flush: commit to SD (slight blocking)
 // Close: full file close, prevents corruption on long sessions
 const unsigned long SD_APPEND_INTERVAL = 200;   // Append every 200ms
-const unsigned long SD_FLUSH_INTERVAL = 2000;   // Flush every 1 second
+const unsigned long SD_FLUSH_INTERVAL = 10000;   // Flush every 1 second
 const unsigned long SD_CLOSE_INTERVAL = 60000;  // Close/reopen every 60 seconds (adjust to lap time)
 
 char csvFilename[32] = {0};  // Will be generated at startup with unique name
@@ -106,6 +129,12 @@ void showDeviceStatus();
 bool canBusReady;
 unsigned long lastBAMOrequest = 0;
 uint8_t CANRequest_sequence = 0;  // 0=motor temp, 1=controller temp, 2=voltage, 3=current
+
+// Global sensor data structs (shared between Core 0 WiFi task and Core 1 main loop)
+Mechanical myMechData;
+Electrical myElectData;
+Odometry myOdometryData;
+BAMOCar myBAMOCar;
 
 // ============================================================================
 // SENSORS CONFIGURATION
@@ -194,8 +223,129 @@ unsigned long lastElectFaultSend = 0;
 unsigned long lastOdometrySend = 0;
 
 // Unix timestamp in ms (from ANY source: RTC/NTP/Server)
-uint64_t DEVICE_UNIX_TIME = 0;  
+uint64_t DEVICE_UNIX_TIME = 0;
 hw_timer_t *My_timer = nullptr;
+
+// ============================================================================
+// FREERTOS WIFI TASK (Runs on Core 0)
+// ============================================================================
+void wifiTask(void* parameter) {
+  // Task-local timing variables
+  unsigned long taskLastBAMOpower = 0;
+  unsigned long taskLastBAMOtemp = 0;
+  unsigned long taskLastMech = 0;
+  unsigned long taskLastElect = 0;
+  unsigned long taskLastElectFault = 0;
+
+  // Local copies of sensor data (copy quickly, publish slowly)
+  Mechanical localMech;
+  Electrical localElect;
+  BAMOCar localBAMO;
+
+  while (true) {
+    unsigned long now = millis();
+
+    // Handle WebSocket communication
+    if (WiFi.status() == WL_CONNECTED) {
+      BPwebSocket->loop();
+    }
+
+    // Update LED status
+    digitalWrite(WIFI_LED, WiFi.status() == WL_CONNECTED ? 1 : 0);
+    digitalWrite(WS_LED, BPsocketstatus->isConnected ? 1 : 0);
+
+    // Publish data if registered and connected
+    if (BPsocketstatus->isRegistered && BPsocketstatus->isConnected) {
+      // Quick copy: take mutex briefly, copy data, release immediately
+      if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+        localMech = myMechData;
+        localElect = myElectData;
+        localBAMO = myBAMOCar;
+        xSemaphoreGive(dataMutex);
+      }
+
+      // Publish using local copies (no mutex held - can take as long as needed)
+      if (now - taskLastBAMOpower >= (1000.0 / BAMO_POWER_SAMPLING_RATE)) {
+        publishBAMOpower(&localBAMO);
+        taskLastBAMOpower = now;
+      }
+      if (now - taskLastBAMOtemp >= (1000.0 / BAMO_TEMP_SAMPLING_RATE)) {
+        publishBAMOtemp(&localBAMO);
+        taskLastBAMOtemp = now;
+      }
+      if (now - taskLastMech >= (1000.0 / MECH_SENSORS_SAMPLING_RATE)) {
+        publishMechData(&localMech);
+        taskLastMech = now;
+      }
+      if (now - taskLastElect >= (1000.0 / ELECT_SENSORS_SAMPLING_RATE)) {
+        publishElectData(&localElect);
+        taskLastElect = now;
+      }
+      if (now - taskLastElectFault >= (1000.0 / ELECT_FAULT_STAT_SAMPLING_RATE)) {
+        publishElectFaultState(&localElect);
+        taskLastElectFault = now;
+      }
+    }
+
+    // Small delay to prevent task starvation
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+}
+
+// ============================================================================
+// FREERTOS SD TASK (Runs on Core 1 - separate from main loop)
+// ============================================================================
+void sdTask(void* parameter) {
+  SDLogEntry entry;
+  unsigned long lastFlushTime = 0;
+  unsigned long lastCloseTime = 0;
+  int localDataPoint = 0;
+
+  while (true) {
+    // Wait for data from queue (blocks until data available)
+    if (xQueueReceive(sdQueue, &entry, portMAX_DELAY) == pdTRUE) {
+      // Check SD card health
+      if (!sdCardReady || !SD32_isPersistentFileOpen()) {
+        continue;  // Skip if SD not ready
+      }
+
+      // Periodic file close/reopen (every lap time)
+      unsigned long now = millis();
+      if (now - lastCloseTime >= SD_CLOSE_INTERVAL) {
+        SD32_closePersistentFile();
+        SD32_openPersistentFile(SD, csvFilename);
+        lastCloseTime = now;
+        // Serial.printf("[SD Task] File rotated -> %s\n", csvFilename);
+      }
+
+      // Write data using appenders
+      AppenderFunc appenders[appenderCount] = {
+        append_DataPoint_toCSVFile,
+        append_Timestamp_toCSVFile,
+        append_SessionTime_toCSVFile,
+        append_MechData_toCSVFile,
+        append_ElectData_toCSVFile,
+        append_OdometryData_toCSVFile,
+        append_BAMOdata_toCSVFile
+      };
+      void* structArray[appenderCount] = {
+        &entry.dataPoint,
+        &entry.unixTime,
+        &entry.sessionTime,
+        &entry.mech,
+        &entry.elect,
+        &entry.odom,
+        &entry.bamo
+      };
+
+      // Append data (blocking but on separate task - doesn't affect main loop)
+      SD32_appendBulkDataPersistent(appenders, structArray, appenderCount, SD_FLUSH_INTERVAL);
+
+      localDataPoint++;
+      Serial.printf("[SD Task] Logged #%d\n", localDataPoint);
+    }
+  }
+}
 
 // ============================================================================
 // SETUP
@@ -264,6 +414,42 @@ void setup() {
   Serial.println("Bridge sensor node - ready to operate");
   Serial.println("==================================================");
   Serial.printf("Client Name: %s\n\n",clientName);
+
+  // Create mutex for shared sensor data
+  dataMutex = xSemaphoreCreateMutex();
+  if (dataMutex == NULL) {
+    Serial.println("[ERROR] Failed to create dataMutex!");
+  }
+
+  // Create WiFi task on Core 0
+  xTaskCreatePinnedToCore(
+    wifiTask,         // Task function
+    "WiFiTask",       // Task name
+    8192,             // Stack size (bytes) - needs space for JSON serialization
+    NULL,             // Parameters
+    1,                // Priority
+    &wifiTaskHandle,  // Task handle
+    0                 // Core 0
+  );
+  Serial.println("[FreeRTOS] WiFi task started on Core 0");
+
+  // Create SD queue (hold up to 30 entries - ~6 seconds buffer at 200ms interval)
+  sdQueue = xQueueCreate(30, sizeof(SDLogEntry));
+  if (sdQueue == NULL) {
+    Serial.println("[ERROR] Failed to create SD queue!");
+  }
+
+  // Create SD task on Core 1 (same core as loop, but separate task)
+  xTaskCreatePinnedToCore(
+    sdTask,           // Task function
+    "SDTask",         // Task name
+    4096,             // Stack size (bytes)
+    NULL,             // Parameters
+    1,                // Priority (same as loop)
+    &sdTaskHandle,    // Task handle
+    1                 // Core 1
+  );
+  Serial.println("[FreeRTOS] SD task started on Core 1");
 }
 
 // ============================================================================
@@ -271,60 +457,15 @@ void setup() {
 // ============================================================================
 
 void loop() {
-  // showDeviceStatus(); 
-  uint64_t SESSION_TIME = millis(); // Now
-  // uint64_t CURRENT_RTC_TIME = RTC_getUnix();
-  uint64_t CURRENT_UNIX_TIME = syncTime_getRelative(DEVICE_UNIX_TIME); // Now Unix
+  uint64_t SESSION_TIME = millis();
+  uint64_t CURRENT_UNIX_TIME = syncTime_getRelative(DEVICE_UNIX_TIME);
 
-  // Resync if DeviceTime drifted from CURRENT_TIME by 1 sec
-  // if (!syncTime_isSynced()) {
-  //   syncTime_resync(DEVICE_UNIX_TIME,CURRENT_UNIX_TIME,1000);
-  // }
-  // // Handle WebSocket communication 
-  if (WiFi.status() == WL_CONNECTED) BPwebSocket->loop();
-    // Update WiFi LED status
-  (WiFi.status() == WL_CONNECTED)? digitalWrite(WIFI_LED,1):digitalWrite(WIFI_LED,0);
-  (BPsocketstatus->isConnected == true)? digitalWrite(WS_LED,1):digitalWrite(WS_LED,0);
+  // CAN message buffers (local to loop)
+  twai_message_t txmsg; twai_message_t rxmsg;
 
-  // Init Temp struct per mcu loop
-  twai_message_t txmsg; twai_message_t rxmsg;   
-  Mechanical myMechData;
-  Electrical myElectData;
-  Odometry myOdometryData;
-  BAMOCar myBAMOCar;
-  // /*
+  // WiFi/WebSocket handling moved to Core 0 (wifiTask)
 
-  if (BPsocketstatus->isRegistered && BPsocketstatus->isConnected) {
-    // Publish BAMOcar power data▲
-    if (SESSION_TIME - lastBAMOsend_power >= (1000.0 / BAMO_POWER_SAMPLING_RATE)) {
-      publishBAMOpower(&myBAMOCar);
-      lastBAMOsend_power = SESSION_TIME;
-    }
-    // Publish temperature data
-    if (SESSION_TIME - lastBAMOsend_temp >= (1000.0 / BAMO_TEMP_SAMPLING_RATE)) {
-      publishBAMOtemp(&myBAMOCar);
-      lastBAMOsend_temp = SESSION_TIME;
-    }
-    // Send Mechanical data
-    if (SESSION_TIME - lastMechSend >= (1000.0 / MECH_SENSORS_SAMPLING_RATE)) {
-      publishMechData(&myMechData);
-      lastMechSend = SESSION_TIME;
-    }
-    // Send Electrical analog data
-    if (SESSION_TIME - lastElectSend >= (1000.0 / ELECT_SENSORS_SAMPLING_RATE)) {
-      publishElectData(&myElectData);
-      lastElectSend = SESSION_TIME;
-    }
-    // Send Electrical fault state data
-    if (SESSION_TIME - lastElectFaultSend >= (1000.0 / ELECT_FAULT_STAT_SAMPLING_RATE)) {
-      publishElectFaultState(&myElectData);
-      lastElectFaultSend = SESSION_TIME;
-    }
-  }
-
-  // */
-
- // Check for backtick without blocking
+  // Check for backtick without blocking
   if (Serial.available() && Serial.peek() == '`') {
     Serial.read();
     while (1) {
@@ -335,39 +476,43 @@ void loop() {
   }
   
   #if MOCK_FLAG == 0
-  // Update Each Sensors
-  RPMsensorUpdate(&myMechData, RPM_CalcInterval ,ENCODER_N); StrokesensorUpdate(&myMechData,STR_Heave,STR_Roll);
-  ElectSensorsUpdate(&myElectData,ElectPinArray);
-  GPSupdate(&myOdometryData,gpsSerial,gps,GPSavailable); 
-  // IMUupdate(&myOdometryData,mpu,IMUavailable);
-  
-  if (canBusReady) {
-    // Receive and process BAMOCar d3 400 CAN frame
-    if(CAN32_receiveCAN(&rxmsg) == ESP_OK) process_ResponseBamocarMsg(&rxmsg, &myBAMOCar);
+  // Update sensors with mutex protection (shared with Core 0 WiFi task)
+  if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+    RPMsensorUpdate(&myMechData, RPM_CalcInterval, ENCODER_N);
+    StrokesensorUpdate(&myMechData, STR_Heave, STR_Roll);
+    ElectSensorsUpdate(&myElectData, ElectPinArray);
+    GPSupdate(&myOdometryData, gpsSerial, gps, GPSavailable);
+    // IMUupdate(&myOdometryData,mpu,IMUavailable);
+    xSemaphoreGive(dataMutex);
+  }
 
-    // Request CAN data RPM_calc_intervalically
-    // Will cycle: 0 = motor temp, 1 = controller temp, 2 = DC voltage, 3 = DC current
+  if (canBusReady) {
+    // Receive and process BAMOCar CAN frame (mutex protected)
+    if (CAN32_receiveCAN(&rxmsg) == ESP_OK) {
+      if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+        process_ResponseBamocarMsg(&rxmsg, &myBAMOCar);
+        xSemaphoreGive(dataMutex);
+      }
+    }
+
+    // Request CAN data periodically
     if (SESSION_TIME - lastBAMOrequest >= BAMOCarREQ_INTERVAL) {
       switch (CANRequest_sequence) {
         case 0:
-          pack_RequestBamocarMsg(&txmsg,BAMOCAR_REG_MOTOR_TEMP);      // 0x49
-          if(CAN32_sendCAN(&txmsg) == ESP_OK); 
-          // Serial.println("Motor_Temp Request success"); 
+          pack_RequestBamocarMsg(&txmsg, BAMOCAR_REG_MOTOR_TEMP);
+          CAN32_sendCAN(&txmsg);
           break;
         case 1:
-          pack_RequestBamocarMsg(&txmsg,BAMOCAR_REG_CONTROLLER_TEMP); // 0x4A
-          if(CAN32_sendCAN(&txmsg) == ESP_OK); 
-          // Serial.println("Controller_Temp Request success");
+          pack_RequestBamocarMsg(&txmsg, BAMOCAR_REG_CONTROLLER_TEMP);
+          CAN32_sendCAN(&txmsg);
           break;
         case 2:
-          pack_RequestBamocarMsg(&txmsg,BAMOCAR_REG_DC_VOLTAGE);      // 0xEB (CORRECTED!)
-          if(CAN32_sendCAN(&txmsg) == ESP_OK); 
-          // Serial.println("Motor_rmsVoltage Request success");
+          pack_RequestBamocarMsg(&txmsg, BAMOCAR_REG_DC_VOLTAGE);
+          CAN32_sendCAN(&txmsg);
           break;
         case 3:
-          pack_RequestBamocarMsg(&txmsg,BAMOCAR_REG_DC_CURRENT);      // 0x20 (CORRECTED!)
-          CAN32_sendCAN(&txmsg); 
-          // Serial.println("Motor_rmsCurrent Request success");
+          pack_RequestBamocarMsg(&txmsg, BAMOCAR_REG_DC_CURRENT);
+          CAN32_sendCAN(&txmsg);
           break;
       }
       CANRequest_sequence++;
@@ -375,57 +520,57 @@ void loop() {
       if (CANRequest_sequence > 3) CANRequest_sequence = 0;
     }
   }
-  // Calculate power
-  if (myBAMOCar.canVoltageValid && myBAMOCar.canCurrentValid)
-    myBAMOCar.power = myBAMOCar.canVoltage * myBAMOCar.canCurrent;
+
+  // Calculate power (mutex protected)
+  if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+    if (myBAMOCar.canVoltageValid && myBAMOCar.canCurrentValid)
+      myBAMOCar.power = myBAMOCar.canVoltage * myBAMOCar.canCurrent;
+    xSemaphoreGive(dataMutex);
+  }
   #endif
 
   #if MOCK_FLAG == 1
-  mockMechanicalData(&myMechData);mockElectricalData(&myElectData);
-  mockOdometryData(&myOdometryData);mockBAMOCarData(&myBAMOCar);
+  // Mock data with mutex protection (shared with Core 0 WiFi task)
+  if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+    mockMechanicalData(&myMechData);
+    mockElectricalData(&myElectData);
+    mockOdometryData(&myOdometryData);
+    mockBAMOCarData(&myBAMOCar);
+    xSemaphoreGive(dataMutex);
+  }
   #endif
 
   // Check SD card health - close file safely if card removed
   if (sdCardReady && !SD32_checkSDconnect()) {
     SD32_closePersistentFile();
     sdCardReady = false;
-    Serial.println("[SD Card] Card removed - file closed safely");
+    // Serial.println("[SD Card] Card removed - file closed safely");
   }
 
-  // Periodic file close/reopen (every lap time)
-  if (sdCardReady && SD32_isPersistentFileOpen() && (SESSION_TIME - lastSDClose >= SD_CLOSE_INTERVAL)) {
-    SD32_closePersistentFile();
-    // SD32_generateUniqueFilename(sessionNumber, csvFilename);
-    // SD32_createCSVFile(csvFilename, csvHeaderBuffer);
-    SD32_openPersistentFile(SD, csvFilename);
-    lastSDClose = SESSION_TIME;
-    Serial.printf("[SD Card] File rotated -> %s\n", csvFilename);
-  }
+  // Queue SD log entry (non-blocking - actual write happens in sdTask)
+  if (sdCardReady && sdQueue != NULL && (SESSION_TIME - lastSDLog >= SD_APPEND_INTERVAL)) {
+    SDLogEntry entry;
+    entry.dataPoint = dataPoint;
+    entry.unixTime = CURRENT_UNIX_TIME;
+    entry.sessionTime = SESSION_TIME;
 
-  // Log to SDcard for set interval if SDcard is connected, we use Persistent file opening
-  if (sdCardReady && SD32_isPersistentFileOpen() && (SESSION_TIME - lastSDLog >= SD_APPEND_INTERVAL)) {
-    AppenderFunc appenders[appenderCount] = { // Comment below to toggle off
-      append_DataPoint_toCSVFile,
-      append_Timestamp_toCSVFile,
-      append_SessionTime_toCSVFile,
-      append_MechData_toCSVFile,
-      append_ElectData_toCSVFile,
-      append_OdometryData_toCSVFile,
-      append_BAMOdata_toCSVFile
-    };
-    void *structArray[appenderCount] = { // Comment below to toggle off
-      &dataPoint,
-      &CURRENT_UNIX_TIME,
-      &SESSION_TIME,
-      &myMechData,
-      &myElectData,
-      &myOdometryData,
-      &myBAMOCar
-    };
-    // Use persistent file (no open/close overhead) with timed flush
-    SD32_appendBulkDataPersistent(appenders, structArray, appenderCount, SD_FLUSH_INTERVAL);
-    dataPoint++;
-    Serial.printf("[SD Card] Logged #%d\n", (dataPoint-1));
+    // Quick copy of sensor data with mutex
+    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+      entry.mech = myMechData;
+      entry.elect = myElectData;
+      entry.odom = myOdometryData;
+      entry.bamo = myBAMOCar;
+      xSemaphoreGive(dataMutex);
+    }
+
+    // Non-blocking queue send (returns immediately)
+    if (xQueueSend(sdQueue, &entry, 0) == pdTRUE) {
+      dataPoint++;
+      // Serial.printf("[Loop] Queued #%d\n", (dataPoint-1));
+    } else {
+      // Serial.println("[Loop] SD queue full - data dropped");
+    }
+
     lastSDLog = SESSION_TIME;
   }
 }
@@ -529,13 +674,13 @@ void publishBAMOpower(BAMOCar* bamocar) {
   serializeJson(powDoc, powMsg);
   BPwebSocket->sendTXT(powMsg);
 
-  Serial.print("[BP Mobile] Power: V=");
-  Serial.print(bamocar->canVoltage, 2);
-  Serial.print("V, I=");
-  Serial.print(bamocar->canCurrent, 3);
-  Serial.print("A, P=");
-  Serial.print(bamocar->power, 2);
-  Serial.println("W");
+  // Serial.print("[BP Mobile] Power: V=");
+  // Serial.print(bamocar->canVoltage, 2);
+  // Serial.print("V, I=");
+  // Serial.print(bamocar->canCurrent, 3);
+  // Serial.print("A, P=");
+  // Serial.print(bamocar->power, 2);
+  // Serial.println("W");
 }
 // Publihs controller, and sensed Motor temp
 void publishBAMOtemp(BAMOCar* bamocar) {
@@ -570,11 +715,11 @@ void publishBAMOtemp(BAMOCar* bamocar) {
     serializeJson(ctrlDoc, ctrlMsg);
     BPwebSocket->sendTXT(ctrlMsg);
 
-    Serial.print("[BP Mobile] CAN Temps: Motor=");
-    Serial.print(bamocar->motorTemp2, 1);
-    Serial.print("°C, Controller=");
-    Serial.print(bamocar->controllerTemp, 1);
-    Serial.println("°C");
+    // Serial.print("[BP Mobile] CAN Temps: Motor=");
+    // Serial.print(bamocar->motorTemp2, 1);
+    // Serial.print("°C, Controller=");
+    // Serial.print(bamocar->controllerTemp, 1);
+    // Serial.println("°C");
   }
 }
 
@@ -626,17 +771,15 @@ void publishMechData(Mechanical* MechSensors) {
   serializeJson(sR, msg1);
   BPwebSocket->sendTXT(msg1);
 
- 
+  // Serial.print("[BP Mobile] RPM L:");
+  // Serial.print(MechSensors->Wheel_RPM_L, 1);
+  // Serial.print(" R:");
+  // Serial.println(MechSensors->Wheel_RPM_R, 1);
 
-  Serial.print("[BP Mobile] RPM L:");
-  Serial.print(MechSensors->Wheel_RPM_L, 1);
-  Serial.print(" R:");
-  Serial.println(MechSensors->Wheel_RPM_R, 1);
-
-  Serial.print("[BP Mobile] Stroke mm STR_Heave:");
-  Serial.print(MechSensors->STR_Roll_mm, 2);
-  Serial.print(" STR_Roll:");
-  Serial.println(MechSensors->STR_Heave_mm, 2);
+  // Serial.print("[BP Mobile] Stroke mm STR_Heave:");
+  // Serial.print(MechSensors->STR_Roll_mm, 2);
+  // Serial.print(" STR_Roll:");
+  // Serial.println(MechSensors->STR_Heave_mm, 2);
 }
 
 void publishElectData(Electrical* ElectSensors) {
@@ -687,14 +830,14 @@ void publishElectData(Electrical* ElectSensors) {
   serializeJson(bppsDoc, bppsMsg);
   BPwebSocket->sendTXT(bppsMsg);
 
-  Serial.print("[BP Mobile] Electrical: I_SENSE=");
-  Serial.print(ElectSensors->I_SENSE, 2);
-  Serial.print(", TMP=");
-  Serial.print(ElectSensors->TMP, 1);
-  Serial.print("°C, APPS=");
-  Serial.print(ElectSensors->APPS, 2);
-  Serial.print(", BPPS=");
-  Serial.println(ElectSensors->BPPS, 2);
+  // Serial.print("[BP Mobile] Electrical: I_SENSE=");
+  // Serial.print(ElectSensors->I_SENSE, 2);
+  // Serial.print(", TMP=");
+  // Serial.print(ElectSensors->TMP, 1);
+  // Serial.print("°C, APPS=");
+  // Serial.print(ElectSensors->APPS, 2);
+  // Serial.print(", BPPS=");
+  // Serial.println(ElectSensors->BPPS, 2);
 }
 
 void publishElectFaultState(Electrical* ElectSensors) {
@@ -747,14 +890,14 @@ void publishElectFaultState(Electrical* ElectSensors) {
   serializeJson(bspdDoc, bspdMsg);
   BPwebSocket->sendTXT(bspdMsg);
 
-  Serial.print("[BP Mobile] Fault States: AMS_OK=");
-  Serial.print(ElectSensors->AMS_OK);
-  Serial.print(", IMD_OK=");
-  Serial.print(ElectSensors->IMD_OK);
-  Serial.print(", HV_ON=");
-  Serial.print(ElectSensors->HV_ON);
-  Serial.print(", BSPD_OK=");
-  Serial.println(ElectSensors->BSPD_OK);
+  // Serial.print("[BP Mobile] Fault States: AMS_OK=");
+  // Serial.print(ElectSensors->AMS_OK);
+  // Serial.print(", IMD_OK=");
+  // Serial.print(ElectSensors->IMD_OK);
+  // Serial.print(", HV_ON=");
+  // Serial.print(ElectSensors->HV_ON);
+  // Serial.print(", BSPD_OK=");
+  // Serial.println(ElectSensors->BSPD_OK);
 }
 
 void registerClient(const char* clientName) {
