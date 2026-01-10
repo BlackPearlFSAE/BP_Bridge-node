@@ -38,6 +38,8 @@ void RPMsensorUpdate(Mechanical *MechSensors, int Period,int encoder_res){
     noInterrupts();
     MechSensors->Wheel_RPM_L = (30000) / Period * ((float)counterL / encoder_res);
     MechSensors->Wheel_RPM_R = (30000) / Period * ((float)counterR / encoder_res);
+    // Serial.printf("RPM L counter: %3f\n",MechSensors->Wheel_RPM_L);
+    // Serial.printf("RPM R counter: %3f\n",MechSensors->Wheel_RPM_R);
     counterL = 0;
     counterR = 0;
     startCalculate = false;
@@ -54,8 +56,10 @@ void StrokesensorUpdate(Mechanical *MechSensors,int Heave,int Roll){
   // ----- Stroke distances
   // Conversion from ADC value back to its sensor reading voltage
   // Conversion of sensor reading voltage KPM18-50mm distance, total distance is 52.91 mm
-  MechSensors->STR_Heave_mm = analogRead(Heave) * (aref / pwmres);
-  MechSensors->STR_Roll_mm = analogRead(Roll) * (aref / pwmres);
+  MechSensors->STR_Heave_mm = (float)(analogRead(Heave) * (max_distance1 / pwmres));
+  MechSensors->STR_Roll_mm = (float)(analogRead(Roll) * (max_distance2 / pwmres));
+  // Serial.printf("GOT STROKE Heave: %3f mm\n",analogRead(Heave)*(max_distance1/(float)(pwmres)));
+  // Serial.printf("GOT STROKE Roll: %3f mm\n",analogRead(Roll)*(max_distance1/(float)(pwmres)));
 }
 
 

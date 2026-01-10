@@ -141,14 +141,14 @@ BAMOCar myBAMOCar;
 // ============================================================================
 
 // --- Wheel RPM Sensors (left, Right)  ---
-#define ENCODER_PINL 41
-#define ENCODER_PINR 42
+#define ENCODER_PINL 3
+#define ENCODER_PINR 9
 #define ENCODER_N 50 // encoding resolution
 unsigned long RPM_CalcInterval = 100; // 100 ms
 
 // --- Stroke Sensors variables (Heave and Roll Distance) ---
-#define STR_Roll 6
-#define STR_Heave 5 // 5
+#define STR_Roll 5
+#define STR_Heave 6 // 5
 
 // PIN Definition
 #define I_SENSE_PIN 4
@@ -348,10 +348,18 @@ void sdTask(void* parameter) {
 }
 
 // ============================================================================
-// SETUP
+//  
 // ============================================================================
 
-#define MOCK_FLAG 1
+#define MOCK_FLAG 0
+
+// ---------------------------------------------------------------------------
+// Teleplot print function prototypes (declared just above setup)
+// ---------------------------------------------------------------------------
+void printMechanicalForTeleplot(Mechanical* mech);
+void printElectricalForTeleplot(Electrical* elect);
+void printOdometryForTeleplot(Odometry* odom);
+void printBAMOForTeleplot(BAMOCar* bamocar);
 
 void setup() {
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); //disable brownout detector
@@ -372,9 +380,9 @@ void setup() {
   #if MOCK_FLAG == 0
   // IMUavailable = IMUinit(&Wire,mpu);
   // delay(1000); IMUcalibrate(mpu,IMUavailable); // 1 sec Calibrate
-  GPSavailable = GPSinit(gpsSerial,GPS_TX_PIN,GPS_RX_PIN,GPS_BAUD); 
+  // GPSavailable = GPSinit(gpsSerial,GPS_TX_PIN,GPS_RX_PIN,GPS_BAUD); 
   RPMinit_withExtPullUP(ENCODER_PINL,ENCODER_PINR); 
-  RPM_setCalcPeriod(My_timer, 100); 
+  RPM_setCalcPeriod(My_timer, 100); // 100 ms
   StrokesensorInit(STR_Heave,STR_Roll);
   ElectSensorsInit(ElectPinArray);
   #endif
@@ -405,10 +413,10 @@ void setup() {
   if (sdCardReady) SD32_openPersistentFile(SD, csvFilename);
   
 
-  // Sync device time with RTC on startup (in second scale)
-  RTCcalibrate(); // Calibrate with Latest Date (Comment out after use)
-  syncTime_setAbsolute(DEVICE_UNIX_TIME,1000000000000ULL /*RTC_getUnix()*/ );
-  Serial.print("Device time synced with RTC: "); Serial.println(RTC_getISO());
+  // // Sync device time with RTC on startup (in second scale)
+  // RTCcalibrate(); // Calibrate with Latest Date (Comment out after use)
+  // syncTime_setAbsolute(DEVICE_UNIX_TIME,1000000000000ULL /*RTC_getUnix()*/ );
+  // Serial.print("Device time synced with RTC: "); Serial.println(RTC_getISO());
 
   Serial.println("==================================================");
   Serial.println("Bridge sensor node - ready to operate");
@@ -450,12 +458,13 @@ void setup() {
     1                 // Core 1
   );
   Serial.println("[FreeRTOS] SD task started on Core 1");
+
 }
 
 // ============================================================================
 // MAIN LOOP
 // ============================================================================
-
+unsigned long lastTeleplot = 0;
 void loop() {
   uint64_t SESSION_TIME = millis();
   uint64_t CURRENT_UNIX_TIME = syncTime_getRelative(DEVICE_UNIX_TIME);
@@ -477,14 +486,23 @@ void loop() {
   
   #if MOCK_FLAG == 0
   // Update sensors with mutex protection (shared with Core 0 WiFi task)
-  if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-    RPMsensorUpdate(&myMechData, RPM_CalcInterval, ENCODER_N);
-    StrokesensorUpdate(&myMechData, STR_Heave, STR_Roll);
-    ElectSensorsUpdate(&myElectData, ElectPinArray);
-    GPSupdate(&myOdometryData, gpsSerial, gps, GPSavailable);
-    // IMUupdate(&myOdometryData,mpu,IMUavailable);
-    xSemaphoreGive(dataMutex);
-  }
+  
+    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+      RPMsensorUpdate(&myMechData, RPM_CalcInterval, ENCODER_N);
+      StrokesensorUpdate(&myMechData, STR_Heave, STR_Roll);
+      // ElectSensorsUpdate(&myElectData, ElectPinArray);
+      // GPSupdate(&myOdometryData, gpsSerial, gps, GPSavailable);
+      // IMUupdate(&myOdometryData,mpu,IMUavailable);
+      xSemaphoreGive(dataMutex);
+    }
+    // if(SESSION_TIME-lastTeleplot >= 200){  
+    //   printMechanicalForTeleplot(&myMechData);
+    //   // printElectricalForTeleplot(&myElectData);
+    //   // printOdometryForTeleplot(&myOdometryData);
+    //   // printBAMOForTeleplot(&myBAMOCar);
+      
+    //   lastTeleplot= SESSION_TIME;
+    // }
 
   if (canBusReady) {
     // Receive and process BAMOCar CAN frame (mutex protected)
@@ -572,7 +590,11 @@ void loop() {
     }
 
     lastSDLog = SESSION_TIME;
+    // Teleplot serial prints (mutex protected)
+    
   }
+ 
+  
 }
 
 
@@ -1198,74 +1220,72 @@ void append_OdometryData_toCSVFile(File& dataFile, void* data) {
 }
 
 // ============================================================================
-// TELEPLOT SERIAL PRINT FUNCTION - prints all structs in teleplot format
+// TELEPLOT: Separate serial print implementations for each data struct
 // ============================================================================
-void printStructsForTeleplot(Mechanical* mech, Electrical* elect, Odometry* odom, BAMOCar* bamocar) {
-  // Mechanical data
-  Serial.print("wheel_rpm_l:");
-  Serial.print(mech->Wheel_RPM_L, 2);
-  Serial.print(" wheel_rpm_r:");
-  Serial.print(mech->Wheel_RPM_R, 2);
-  Serial.print(" heave:");
-  Serial.print(mech->STR_Heave_mm, 2);
-  Serial.print(" roll:");
-  Serial.print(elect->I_SENSE, 2);
-  Serial.print(" ");
-  
-  // Electrical data
-  Serial.print("current:");
-  Serial.print(elect->I_SENSE, 2);
-  Serial.print(" temp:");
-  Serial.print(elect->TMP, 2);
-  Serial.print(" apps:");
-  Serial.print(elect->APPS, 2);
-  Serial.print(" bpps:");
-  Serial.print(elect->BPPS, 2);
-  Serial.print(" ams:");
-  Serial.print(elect->AMS_OK ? 1 : 0);
-  Serial.print(" imd:");
-  Serial.print(elect->IMD_OK ? 1 : 0);
-  Serial.print(" hv:");
-  Serial.print(elect->HV_ON ? 1 : 0);
-  Serial.print(" bspd:");
-  Serial.print(elect->BSPD_OK ? 1 : 0);
-  Serial.print(" ");
-  
-  // Odometry data
-  Serial.print("gps_lat:");
-  Serial.print(odom->gps_lat, 6);
-  Serial.print(" gps_lng:");
-  Serial.print(odom->gps_lng, 6);
-  Serial.print(" gps_speed:");
-  Serial.print(odom->gps_speed, 2);
-  Serial.print(" gps_course:");
-  Serial.print(odom->gps_course, 2);
-  Serial.print(" accel_x:");
-  Serial.print(odom->imu_accelx, 3);
-  Serial.print(" accel_y:");
-  Serial.print(odom->imu_accely, 3);
-  Serial.print(" accel_z:");
-  Serial.print(odom->imu_accelz, 3);
-  Serial.print(" gyro_x:");
-  Serial.print(odom->imu_gyrox, 3);
-  Serial.print(" gyro_y:");
-  Serial.print(odom->imu_gyroy, 3);
-  Serial.print(" gyro_z:");
-  Serial.print(odom->imu_gyroz, 3);
-  Serial.print(" ");
-  
-  // BAMOCar data
-  Serial.print("bamo_motor_temp1:");
-  Serial.print(bamocar->motorTemp1, 2);
-  Serial.print(" bamo_motor_temp2:");
-  Serial.print(bamocar->motorTemp2, 2);
-  Serial.print(" bamo_ctrl_temp:");
-  Serial.print(bamocar->controllerTemp, 2);
-  Serial.print(" bamo_voltage:");
-  Serial.print(bamocar->canVoltage, 2);
-  Serial.print(" bamo_current:");
-  Serial.print(bamocar->canCurrent, 2);
-  Serial.print(" bamo_power:");
-  Serial.print(bamocar->power, 2);
-  Serial.println();
+void printMechanicalForTeleplot(Mechanical* mech) {
+  Serial.print(">wheel_rpm_l:");
+  Serial.println(mech->Wheel_RPM_L, 2);
+  Serial.print(">wheel_rpm_r:");
+  Serial.println(mech->Wheel_RPM_R, 2);
+  Serial.print(">heave:");
+  Serial.println(mech->STR_Heave_mm, 2);
+  Serial.print(">roll:");
+  Serial.println(mech->STR_Roll_mm, 2);
+}
+
+void printElectricalForTeleplot(Electrical* elect) {
+  Serial.print(">current:");
+  Serial.println(elect->I_SENSE, 2);
+  Serial.print(">temp:");
+  Serial.println(elect->TMP, 2);
+  Serial.print(">apps:");
+  Serial.println(elect->APPS, 2);
+  Serial.print(">bpps:");
+  Serial.println(elect->BPPS, 2);
+  Serial.print(">ams:");
+  Serial.println(elect->AMS_OK ? 1 : 0);
+  Serial.print(">imd:");
+  Serial.println(elect->IMD_OK ? 1 : 0);
+  Serial.print(">hv:");
+  Serial.println(elect->HV_ON ? 1 : 0);
+  Serial.print(">bspd:");
+  Serial.println(elect->BSPD_OK ? 1 : 0);
+}
+
+void printOdometryForTeleplot(Odometry* odom) {
+  Serial.print(">gps_lat:");
+  Serial.println(odom->gps_lat, 6);
+  Serial.print(">gps_lng:");
+  Serial.println(odom->gps_lng, 6);
+  Serial.print(">gps_speed:");
+  Serial.println(odom->gps_speed, 2);
+  Serial.print(">gps_course:");
+  Serial.println(odom->gps_course, 2);
+  Serial.print(">accel_x:");
+  Serial.println(odom->imu_accelx, 3);
+  Serial.print(">accel_y:");
+  Serial.println(odom->imu_accely, 3);
+  Serial.print(">accel_z:");
+  Serial.println(odom->imu_accelz, 3);
+  Serial.print(">gyro_x:");
+  Serial.println(odom->imu_gyrox, 3);
+  Serial.print(">gyro_y:");
+  Serial.println(odom->imu_gyroy, 3);
+  Serial.print(">gyro_z:");
+  Serial.println(odom->imu_gyroz, 3);
+}
+
+void printBAMOForTeleplot(BAMOCar* bamocar) {
+  Serial.print(">bamo_motor_temp1:");
+  Serial.println(bamocar->motorTemp1, 2);
+  Serial.print(">bamo_motor_temp2:");
+  Serial.println(bamocar->motorTemp2, 2);
+  Serial.print(">bamo_ctrl_temp:");
+  Serial.println(bamocar->controllerTemp, 2);
+  Serial.print(">bamo_voltage:");
+  Serial.println(bamocar->canVoltage, 2);
+  Serial.print(">bamo_current:");
+  Serial.println(bamocar->canCurrent, 2);
+  Serial.print(">bamo_power:");
+  Serial.println(bamocar->power, 2);
 }
