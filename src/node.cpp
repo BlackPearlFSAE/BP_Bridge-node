@@ -226,6 +226,10 @@ unsigned long lastOdometrySend = 0;
 uint64_t DEVICE_UNIX_TIME = 0;
 hw_timer_t *My_timer = nullptr;
 
+// External time sync configuration
+const unsigned long EXTERNAL_SYNC_INTERVAL = 60000;  // 1 minute
+unsigned long lastExternalSync = 0;
+
 // ============================================================================
 // FREERTOS WIFI TASK (Runs on Core 0)
 // ============================================================================
@@ -351,8 +355,6 @@ void sdTask(void* parameter) {
 //  
 // ============================================================================
 
-#define MOCK_FLAG 0
-
 // ---------------------------------------------------------------------------
 // Teleplot print function prototypes (declared just above setup)
 // ---------------------------------------------------------------------------
@@ -360,6 +362,9 @@ void printMechanicalForTeleplot(Mechanical* mech);
 void printElectricalForTeleplot(Electrical* elect);
 void printOdometryForTeleplot(Odometry* odom);
 void printBAMOForTeleplot(BAMOCar* bamocar);
+unsigned long lastTeleplot = 0;
+
+#define MOCK_FLAG 0
 
 void setup() {
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); //disable brownout detector
@@ -390,6 +395,8 @@ void setup() {
   // Connect to WiFi and Websocket
   initWiFi(ssid,password, /*Atttempt*/ 10);
   if (WiFi.status() == WL_CONNECTED) {
+    // Initialize NTP after WiFi connects
+    WiFi32_initNTP();  // Uses default pool.ntp.org
     // set a register callback into the websocketEventhandler
     BPMobile.setClientName(clientName); BPMobile.setRegisterCallback(registerClient);
     BPMobile.initWebSocket(serverHost,serverPort,clientName);
@@ -413,10 +420,10 @@ void setup() {
   if (sdCardReady) SD32_openPersistentFile(SD, csvFilename);
   
 
-  // // Sync device time with RTC on startup (in second scale)
-  // RTCcalibrate(); // Calibrate with Latest Date (Comment out after use)
-  // syncTime_setAbsolute(DEVICE_UNIX_TIME,1000000000000ULL /*RTC_getUnix()*/ );
-  // Serial.print("Device time synced with RTC: "); Serial.println(RTC_getISO());
+  // Sync device time with RTC on startup (in second scale)
+  RTCcalibrate(); // Calibrate with Latest Date (Comment out after use)
+  syncTime_setAbsolute(DEVICE_UNIX_TIME,1000000000000ULL /*RTC_getUnix()*/ );
+  Serial.print("Device time synced with RTC: "); Serial.println(RTC_getISO());
 
   Serial.println("==================================================");
   Serial.println("Bridge sensor node - ready to operate");
@@ -464,7 +471,7 @@ void setup() {
 // ============================================================================
 // MAIN LOOP
 // ============================================================================
-unsigned long lastTeleplot = 0;
+
 void loop() {
   uint64_t SESSION_TIME = millis();
   uint64_t CURRENT_UNIX_TIME = syncTime_getRelative(DEVICE_UNIX_TIME);
@@ -495,14 +502,6 @@ void loop() {
       // IMUupdate(&myOdometryData,mpu,IMUavailable);
       xSemaphoreGive(dataMutex);
     }
-    // if(SESSION_TIME-lastTeleplot >= 200){  
-    //   printMechanicalForTeleplot(&myMechData);
-    //   // printElectricalForTeleplot(&myElectData);
-    //   // printOdometryForTeleplot(&myOdometryData);
-    //   // printBAMOForTeleplot(&myBAMOCar);
-      
-    //   lastTeleplot= SESSION_TIME;
-    // }
 
   if (canBusReady) {
     // Receive and process BAMOCar CAN frame (mutex protected)
@@ -545,6 +544,7 @@ void loop() {
       myBAMOCar.power = myBAMOCar.canVoltage * myBAMOCar.canCurrent;
     xSemaphoreGive(dataMutex);
   }
+
   #endif
 
   #if MOCK_FLAG == 1
@@ -557,6 +557,16 @@ void loop() {
     xSemaphoreGive(dataMutex);
   }
   #endif
+
+    // if(SESSION_TIME-lastTeleplot >= 200){  
+    //   printMechanicalForTeleplot(&myMechData);
+    //   printElectricalForTeleplot(&myElectData);
+    //   printOdometryForTeleplot(&myOdometryData);
+    //   printBAMOForTeleplot(&myBAMOCar);
+      
+    //   lastTeleplot= SESSION_TIME;
+    //   return;
+    // }
 
   // Check SD card health - close file safely if card removed
   if (sdCardReady && !SD32_checkSDconnect()) {
@@ -590,11 +600,45 @@ void loop() {
     }
 
     lastSDLog = SESSION_TIME;
-    // Teleplot serial prints (mutex protected)
-    
+
   }
- 
-  
+
+  // ============================================================================
+  // PERIODIC EXTERNAL TIME SYNC (every 1 minute)
+  // ============================================================================
+  if (SESSION_TIME - lastExternalSync >= EXTERNAL_SYNC_INTERVAL) {
+    uint64_t externalTime = 0;
+    bool gotExternalTime = false;
+
+    // Try server time first (if available)
+    uint64_t serverTime = BPMobile_getLastServerTime();
+    if (BPsocketstatus->isConnected && serverTime > 0) {
+      externalTime = serverTime;
+      gotExternalTime = true;
+      Serial.println("[TimeSync] Using server time");
+    }
+    // Fallback to NTP
+    else if (WiFi32_isNTPSynced()) {
+      externalTime = WiFi32_getNTPTime();
+      if (externalTime > 0) {
+        gotExternalTime = true;
+        Serial.println("[TimeSync] Using NTP time");
+      }
+    }
+
+    // Sync if we got external time
+    if (gotExternalTime) {
+      bool synced = syncTime_fromExternal(DEVICE_UNIX_TIME, externalTime,
+                                           RTCavailable ? &rtc : nullptr);
+      if (synced) {
+        Serial.printf("[TimeSync] Resynced! Drift was %lld ms\n",
+                      syncTime_getDrift(DEVICE_UNIX_TIME, externalTime));
+      }
+    }
+
+    lastExternalSync = SESSION_TIME;
+  }
+
 }
 
 

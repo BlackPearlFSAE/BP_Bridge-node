@@ -80,4 +80,31 @@ void syncTime_formatUnix(char* outBuf, uint64_t unixMs, int timezoneOffsetHours)
  */
 void syncTime_formatUnix_UTC(char* outBuf, uint64_t unixMs);     // UTC (GMT+0)
 
+// ============================================================================
+// EXTERNAL TIME SYNC (Server/NTP with optional RTC write-back)
+// ============================================================================
+
+/**
+ * Sync from external source (Server/NTP) with optional RTC write-back
+ * Only syncs if drift exceeds threshold
+ *
+ * Parameters:
+ *   - deviceTime: Reference to device time variable
+ *   - externalTimeMs: External timestamp in milliseconds
+ *   - rtcPtr: Pointer to RTC_DS3231 object (nullptr = don't update RTC)
+ *   - driftThreshold_ms: Minimum drift to trigger sync (default: 1000ms)
+ *
+ * Returns: true if synced, false if skipped (drift < threshold)
+ */
+bool syncTime_fromExternal(uint64_t &deviceTime, uint64_t externalTimeMs,
+                           void* rtcPtr = nullptr, uint64_t driftThreshold_ms = 1000ULL);
+
+/**
+ * Get current drift between device time and external source
+ * Useful for diagnostics without triggering sync
+ *
+ * Returns: drift in ms (positive = device ahead, negative = device behind)
+ */
+int64_t syncTime_getDrift(uint64_t deviceTime, uint64_t externalTimeMs);
+
 #endif // SYNCTIME_UTIL_V2_H

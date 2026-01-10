@@ -89,3 +89,26 @@ private:
 // }
 
 */
+
+// ============================================================================
+// SERVER TIME SYNC (NEW - Standalone functions for external time source)
+// ============================================================================
+
+/**
+ * Request server time via WebSocket
+ * Server should respond with {"type": "time_response", "server_time": <unix_ms>}
+ */
+void BPMobile_requestServerTime(WebSocketsClient* ws);
+
+/**
+ * Parse server time from incoming WebSocket message
+ * Call this in your WebSocket message handler
+ * Returns: server timestamp in ms, or 0 if message doesn't contain time
+ */
+uint64_t BPMobile_parseServerTime(const char* payload);
+
+/**
+ * Get last received server time
+ * Returns: last server timestamp in ms, or 0 if never received
+ */
+uint64_t BPMobile_getLastServerTime();

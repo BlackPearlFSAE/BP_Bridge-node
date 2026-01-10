@@ -204,3 +204,44 @@ BPMobileConfig::~BPMobileConfig()
     this->webSocketstatus = nullptr;
   }
 }
+
+// ============================================================================
+// SERVER TIME SYNC IMPLEMENTATION (Standalone functions)
+// ============================================================================
+
+static uint64_t _lastServerTime = 0;
+
+void BPMobile_requestServerTime(WebSocketsClient* ws) {
+  if (ws == nullptr) return;
+
+  // Send time request to server
+  ws->sendTXT("{\"type\":\"time_request\"}");
+  Serial.println("[BPMobile] Requested server time");
+}
+
+uint64_t BPMobile_parseServerTime(const char* payload) {
+  // Simple parsing - look for "server_time" field
+  // Expected format: {"type": "time_response", "server_time": 1736000000000}
+
+  const char* timeKey = "\"server_time\":";
+  const char* pos = strstr(payload, timeKey);
+  if (pos == nullptr) return 0;
+
+  pos += strlen(timeKey);
+  // Skip whitespace
+  while (*pos == ' ' || *pos == '\t') pos++;
+
+  // Parse number
+  uint64_t serverTime = strtoull(pos, nullptr, 10);
+
+  if (serverTime > 1000000000000ULL) {  // Valid timestamp (after year 2001)
+    _lastServerTime = serverTime;
+    Serial.printf("[BPMobile] Received server time: %llu\n", serverTime);
+  }
+
+  return serverTime;
+}
+
+uint64_t BPMobile_getLastServerTime() {
+  return _lastServerTime;
+}

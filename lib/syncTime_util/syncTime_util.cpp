@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <syncTime_util.h>
+#include <RTClib.h>  // For RTC_DS3231
 
 // ============================================================================
 // CLEAN TIME SYSTEM - Source-Agnostic Unix Timestamp Management
@@ -109,4 +110,44 @@ void syncTime_formatUnix(char* outBuf, uint64_t unixMs, int timezoneOffsetHours)
  */
 void syncTime_formatUnix_UTC(char* outBuf, uint64_t unixMs) {
   syncTime_formatUnix(outBuf, unixMs, 0);
+}
+
+// ============================================================================
+// EXTERNAL TIME SYNC (Server/NTP with optional RTC write-back)
+// ============================================================================
+
+/**
+ * Get current drift between device time and external source
+ * Returns: drift in ms (positive = device ahead, negative = device behind)
+ */
+int64_t syncTime_getDrift(uint64_t deviceTime, uint64_t externalTimeMs) {
+  uint64_t currentTime = syncTime_getRelative(deviceTime);
+  return (int64_t)currentTime - (int64_t)externalTimeMs;
+}
+
+/**
+ * Sync from external source (Server/NTP) with optional RTC write-back
+ * Only syncs if drift exceeds threshold
+ */
+bool syncTime_fromExternal(uint64_t &deviceTime, uint64_t externalTimeMs,
+                           void* rtcPtr, uint64_t driftThreshold_ms) {
+  // Check drift first
+  int64_t drift = syncTime_getDrift(deviceTime, externalTimeMs);
+
+  if (llabs(drift) < (long long)driftThreshold_ms) {
+    return false;  // Drift within tolerance, skip sync
+  }
+
+  // Update device time
+  syncTime_setAbsolute(deviceTime, externalTimeMs);
+
+  // Update RTC hardware if provided
+  if (rtcPtr != nullptr) {
+    RTC_DS3231* rtc = static_cast<RTC_DS3231*>(rtcPtr);
+    uint32_t unixSec = externalTimeMs / 1000ULL;
+    rtc->adjust(DateTime(unixSec));
+    Serial.println("[TimeSync] RTC hardware updated");
+  }
+
+  return true;
 }
