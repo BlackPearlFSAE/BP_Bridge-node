@@ -217,7 +217,7 @@ void setup() {
 
   // Sync device time with RTC on startup (in second scale)
   RTCcalibrate(); // Calibrate with Latest Date (Comment out after use)
-  syncTime_setAbsolute(DEVICE_UNIX_TIME,1000000000000ULL /*RTC_getUnix()*/ );
+  syncTime(DEVICE_UNIX_TIME,1000000000000ULL /*RTC_getUnix()*/ );
   Serial.print("Device time synced with RTC: "); Serial.println(RTC_getISO());
 
   Serial.println("==================================================");
@@ -233,7 +233,7 @@ void setup() {
 void loop() {
 
   uint32_t SESSION_TIME = millis(); // Now
-  uint64_t RELATIVE_UNIX_TIME = syncTime_getRelative(DEVICE_UNIX_TIME); // Now Unix
+  uint64_t RELATIVE_UNIX_TIME = syncTime_getElapse(DEVICE_UNIX_TIME); // Now Unix
   // Resync if DeviceTime drifted from CURRENT_TIME by 1 sec
   // if (!syncTime_isSynced()) {
   //   syncTime_resync(DEVICE_UNIX_TIME,RELATIVE_UNIX_TIME,1000);
@@ -410,7 +410,7 @@ void showDeviceStatus() {
 
 // Publish Voltage, Current , Power consumption
 void publishBAMOpower(BAMOCar* bamocar) {
-  unsigned long long unixTimestamp = syncTime_getRelative(DEVICE_UNIX_TIME);
+  unsigned long long unixTimestamp = syncTime_getElapse(DEVICE_UNIX_TIME);
 
   if (unixTimestamp < 1000000000000ULL) return;
 
@@ -464,7 +464,7 @@ void publishBAMOpower(BAMOCar* bamocar) {
 }
 // Publihs controller, and sensed Motor temp
 void publishBAMOtemp(BAMOCar* bamocar) {
-  unsigned long long unixTimestamp = syncTime_getRelative(DEVICE_UNIX_TIME);
+  unsigned long long unixTimestamp = syncTime_getElapse(DEVICE_UNIX_TIME);
   // timeout function
   if (unixTimestamp < 1000000000000ULL) return;
 
@@ -504,7 +504,7 @@ void publishBAMOtemp(BAMOCar* bamocar) {
 }
 
 void publishMechData(Mechanical* MechSensors) {
-  unsigned long long unixTimestamp = syncTime_getRelative(DEVICE_UNIX_TIME);
+  unsigned long long unixTimestamp = syncTime_getElapse(DEVICE_UNIX_TIME);
   if (unixTimestamp < 1000000000000ULL) return;
 
   // Left wheel RPM
@@ -565,7 +565,7 @@ void publishMechData(Mechanical* MechSensors) {
 }
 
 void publishElectData(Electrical* ElectSensors) {
-  unsigned long long unixTimestamp = syncTime_getRelative(DEVICE_UNIX_TIME);
+  unsigned long long unixTimestamp = syncTime_getElapse(DEVICE_UNIX_TIME);
   if (unixTimestamp < 1000000000000ULL) return;
 
   // Current Sense
@@ -623,7 +623,7 @@ void publishElectData(Electrical* ElectSensors) {
 }
 
 void publishElectFaultState(Electrical* ElectSensors) {
-  unsigned long long unixTimestamp = syncTime_getRelative(DEVICE_UNIX_TIME);
+  unsigned long long unixTimestamp = syncTime_getElapse(DEVICE_UNIX_TIME);
   if (unixTimestamp < 1000000000000ULL) return;
 
   // AMS OK status

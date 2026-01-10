@@ -10,6 +10,7 @@
 #include <WebSocketsClient.h>
 #include <ArduinoJson.h>
 #include <RTClib.h>
+#include <time.h>
 #include <MPU6050_light.h>
 #include <TinyGPS++.h>
 
@@ -31,7 +32,7 @@
 // ============================================================================
 const char* ssid = "realme C55";
 const char* password = "realme1234";
-const char* serverHost = "10.1.92.227";
+const char* serverHost = "10.11.159.160";
 const int serverPort = 3000;
 const char* clientName = "ESP32 Rear";  // Unique per sensor node
 
@@ -226,6 +227,10 @@ unsigned long lastOdometrySend = 0;
 uint64_t DEVICE_UNIX_TIME = 0;
 hw_timer_t *My_timer = nullptr;
 
+// External time sync configuration
+const unsigned long EXTERNAL_SYNC_INTERVAL = 60000;  // 1 minute
+unsigned long lastExternalSync = 0;
+
 // ============================================================================
 // FREERTOS WIFI TASK (Runs on Core 0)
 // ============================================================================
@@ -342,7 +347,7 @@ void sdTask(void* parameter) {
       SD32_appendBulkDataPersistent(appenders, structArray, appenderCount, SD_FLUSH_INTERVAL);
 
       localDataPoint++;
-      Serial.printf("[SD Task] Logged #%d\n", localDataPoint);
+      // Serial.printf("[SD Task] Logged #%d\n", localDataPoint);
     }
   }
 }
@@ -351,8 +356,6 @@ void sdTask(void* parameter) {
 //  
 // ============================================================================
 
-#define MOCK_FLAG 0
-
 // ---------------------------------------------------------------------------
 // Teleplot print function prototypes (declared just above setup)
 // ---------------------------------------------------------------------------
@@ -360,10 +363,16 @@ void printMechanicalForTeleplot(Mechanical* mech);
 void printElectricalForTeleplot(Electrical* elect);
 void printOdometryForTeleplot(Odometry* odom);
 void printBAMOForTeleplot(BAMOCar* bamocar);
+unsigned long lastTeleplot = 0;
+
+#define MOCK_FLAG 0
 
 void setup() {
+
+
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); //disable brownout detector
   Serial.begin(UART0_BAUD);
+  
   (Wire1.begin(I2C1_SDA,I2C1_SCL)) ? I2C1_connect=1 : I2C1_connect=0 ;
   (Wire.begin(I2C2_SDA,I2C2_SCL)) ? I2C2_connect =1 : I2C2_connect=0 ;
   Wire1.setTimeout(2); Wire.setTimeout(2);
@@ -374,9 +383,9 @@ void setup() {
   // CAN32 Init
   CAN32_initCANBus(CAN_TX_PIN,CAN_RX_PIN, canBusReady,
   TWAI_TIMING_CONFIG_250KBITS(), TWAI_FILTER_CONFIG_ACCEPT_ALL());
-  // Separated I2C bus
-  RTCavailable = RTCinit(&Wire1);
+  
 
+  RTCavailable = RTCinit(&Wire1);
   #if MOCK_FLAG == 0
   // IMUavailable = IMUinit(&Wire,mpu);
   // delay(1000); IMUcalibrate(mpu,IMUavailable); // 1 sec Calibrate
@@ -390,6 +399,8 @@ void setup() {
   // Connect to WiFi and Websocket
   initWiFi(ssid,password, /*Atttempt*/ 10);
   if (WiFi.status() == WL_CONNECTED) {
+    // Initialize NTP after WiFi connects
+    WiFi32_initNTP();  // Uses default pool.ntp.org
     // set a register callback into the websocketEventhandler
     BPMobile.setClientName(clientName); BPMobile.setRegisterCallback(registerClient);
     BPMobile.initWebSocket(serverHost,serverPort,clientName);
@@ -398,25 +409,21 @@ void setup() {
   // Initialize SD Card with SD32_util
   SD32_initSDCard(SD_SCK_PIN,SD_MISO_PIN,SD_MOSI_PIN,SD_CS_PIN,sdCardReady);
   SD32_generateUniqueFilename(sessionNumber,csvFilename); // modify filename to be unique/session
-
   strcat(csvHeaderBuffer,header_Timestamp);  strcat(csvHeaderBuffer,",");
   // Can Comment any one of these out
   strcat(csvHeaderBuffer,header_Mechanical); strcat(csvHeaderBuffer,",");
   strcat(csvHeaderBuffer,header_Electrical); strcat(csvHeaderBuffer,",");
   strcat(csvHeaderBuffer,header_Odometry);   strcat(csvHeaderBuffer,",");
   strcat(csvHeaderBuffer,header_BAMO);
-  
   // create with unique filename and dynamic header
   SD32_createCSVFile(csvFilename,csvHeaderBuffer);
-  
   // Open persistent file handle for the first time
   if (sdCardReady) SD32_openPersistentFile(SD, csvFilename);
   
-
-  // // Sync device time with RTC on startup (in second scale)
-  // RTCcalibrate(); // Calibrate with Latest Date (Comment out after use)
-  // syncTime_setAbsolute(DEVICE_UNIX_TIME,1000000000000ULL /*RTC_getUnix()*/ );
-  // Serial.print("Device time synced with RTC: "); Serial.println(RTC_getISO());
+  // Sync device time with RTC on startup (in second scale)
+  RTCcalibrate(); // Calibrate with Latest Date (Comment out after use)
+  syncTime(DEVICE_UNIX_TIME, WiFi32_isNTPSynced()? WiFi32_getNTPTime():1000000000000ULL /*RTC_getUnix()*/ );
+  Serial.print("Device time synced with RTC: "); Serial.println(RTC_getISO());
 
   Serial.println("==================================================");
   Serial.println("Bridge sensor node - ready to operate");
@@ -439,7 +446,7 @@ void setup() {
     &wifiTaskHandle,  // Task handle
     0                 // Core 0
   );
-  Serial.println("[FreeRTOS] WiFi task started on Core 0");
+  Serial.println("[FreeRTOS] BPMobile task started on Core 0");
 
   // Create SD queue (hold up to 30 entries - ~6 seconds buffer at 200ms interval)
   sdQueue = xQueueCreate(30, sizeof(SDLogEntry));
@@ -457,22 +464,80 @@ void setup() {
     &sdTaskHandle,    // Task handle
     1                 // Core 1
   );
-  Serial.println("[FreeRTOS] SD task started on Core 1");
+  Serial.println("[FreeRTOS] SD Logger task started on Core 1");
 
 }
 
 // ============================================================================
 // MAIN LOOP
 // ============================================================================
-unsigned long lastTeleplot = 0;
+
 void loop() {
+  // Read from ESP32 internal RTC (set by any time source via settimeofday)
+  uint64_t DEVICE_UNIX_TIME = (uint64_t)time(NULL) * 1000ULL;
   uint64_t SESSION_TIME = millis();
-  uint64_t CURRENT_UNIX_TIME = syncTime_getRelative(DEVICE_UNIX_TIME);
+  uint64_t CURRENT_UNIX_TIME = syncTime_getElapse(DEVICE_UNIX_TIME);
+  
+  // ============================================================================
+  // PERIODIC TIME SOURCE SYNC (every 1 second) -> ESP32 internal RTC
+  // ============================================================================
+  static unsigned long lastTimeSourceSync = 0;
+  if (SESSION_TIME - lastTimeSourceSync >= 1000) {
+    uint64_t sourceTimeMs = 0;
 
-  // CAN message buffers (local to loop)
+    // Priority: Server > NTP > DS3231
+    // Just change it to commenting
+    uint64_t serverTime = BPMobile_getLastServerTime();
+    if (BPsocketstatus->isConnected && serverTime > 0) {
+      sourceTimeMs = serverTime;
+    } else if (WiFi32_isNTPSynced()) {
+      sourceTimeMs = WiFi32_getNTPTime();
+    } else if (RTCavailable) {
+      sourceTimeMs = (uint64_t)rtc.now().unixtime() * 1000ULL;
+    }
+
+    if (sourceTimeMs > 0) {
+      syncTime(DEVICE_UNIX_TIME, sourceTimeMs);
+    }
+    lastTimeSourceSync = SESSION_TIME;
+  }
+
+  // Serial.println(DEVICE_UNIX_TIME);
+  // return;
+
+  // ============================================================================
+  // PERIODIC DS3231 HARDWARE RTC UPDATE (every 1 minute)
+  // Purpose: Persist NTP/Server time to DS3231 for power-loss recovery
+  // Note: ESP32 RTC is already updated every 1s by the sync block above
+  // ============================================================================
+  if (SESSION_TIME - lastExternalSync >= EXTERNAL_SYNC_INTERVAL) {
+    uint64_t externalTime = 0;
+    bool gotExternalTime = false;
+
+    // Only sync from network sources (Server/NTP) to DS3231
+    uint64_t serverTime = BPMobile_getLastServerTime();
+    if (BPsocketstatus->isConnected && serverTime > 0) {
+      externalTime = serverTime;
+      gotExternalTime = true;
+    } else if (WiFi32_isNTPSynced()) {
+      externalTime = WiFi32_getNTPTime();
+      if (externalTime > 0) {
+        gotExternalTime = true;
+      }
+    }
+
+    // Update DS3231 hardware RTC for persistence
+    if (gotExternalTime && RTCavailable) {
+      int64_t drift = syncTime_getDrift(DEVICE_UNIX_TIME, externalTime);
+      if (llabs(drift) >= 1000) {  // Only update if drift > 1s
+        rtc.adjust(DateTime((uint32_t)(externalTime / 1000ULL)));
+        Serial.printf("[TimeSync] DS3231 updated, drift was %lld ms\n", drift);
+      }
+    }
+    lastExternalSync = SESSION_TIME;
+  }
+
   twai_message_t txmsg; twai_message_t rxmsg;
-
-  // WiFi/WebSocket handling moved to Core 0 (wifiTask)
 
   // Check for backtick without blocking
   if (Serial.available() && Serial.peek() == '`') {
@@ -483,27 +548,20 @@ void loop() {
       delay(200); 
     }
   }
+
+  
   
   #if MOCK_FLAG == 0
   // Update sensors with mutex protection (shared with Core 0 WiFi task)
-  
-    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-      RPMsensorUpdate(&myMechData, RPM_CalcInterval, ENCODER_N);
-      StrokesensorUpdate(&myMechData, STR_Heave, STR_Roll);
-      // ElectSensorsUpdate(&myElectData, ElectPinArray);
-      // GPSupdate(&myOdometryData, gpsSerial, gps, GPSavailable);
-      // IMUupdate(&myOdometryData,mpu,IMUavailable);
-      xSemaphoreGive(dataMutex);
-    }
-    // if(SESSION_TIME-lastTeleplot >= 200){  
-    //   printMechanicalForTeleplot(&myMechData);
-    //   // printElectricalForTeleplot(&myElectData);
-    //   // printOdometryForTeleplot(&myOdometryData);
-    //   // printBAMOForTeleplot(&myBAMOCar);
-      
-    //   lastTeleplot= SESSION_TIME;
-    // }
-
+  if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+    RPMsensorUpdate(&myMechData, RPM_CalcInterval, ENCODER_N);
+    StrokesensorUpdate(&myMechData, STR_Heave, STR_Roll);
+    ElectSensorsUpdate(&myElectData, ElectPinArray);
+    // GPSupdate(&myOdometryData, gpsSerial, gps, GPSavailable);
+    // IMUupdate(&myOdometryData,mpu,IMUavailable);
+    xSemaphoreGive(dataMutex);
+  }
+  // CAN Bus
   if (canBusReady) {
     // Receive and process BAMOCar CAN frame (mutex protected)
     if (CAN32_receiveCAN(&rxmsg) == ESP_OK) {
@@ -512,7 +570,6 @@ void loop() {
         xSemaphoreGive(dataMutex);
       }
     }
-
     // Request CAN data periodically
     if (SESSION_TIME - lastBAMOrequest >= BAMOCarREQ_INTERVAL) {
       switch (CANRequest_sequence) {
@@ -545,6 +602,7 @@ void loop() {
       myBAMOCar.power = myBAMOCar.canVoltage * myBAMOCar.canCurrent;
     xSemaphoreGive(dataMutex);
   }
+
   #endif
 
   #if MOCK_FLAG == 1
@@ -557,6 +615,15 @@ void loop() {
     xSemaphoreGive(dataMutex);
   }
   #endif
+
+    if(SESSION_TIME-lastTeleplot >= 200){  
+      printMechanicalForTeleplot(&myMechData);
+      // printElectricalForTeleplot(&myElectData);
+      // printOdometryForTeleplot(&myOdometryData);
+      // printBAMOForTeleplot(&myBAMOCar);
+      lastTeleplot= SESSION_TIME;
+      return;
+    }
 
   // Check SD card health - close file safely if card removed
   if (sdCardReady && !SD32_checkSDconnect()) {
@@ -590,11 +657,10 @@ void loop() {
     }
 
     lastSDLog = SESSION_TIME;
-    // Teleplot serial prints (mutex protected)
-    
+
   }
- 
-  
+
+
 }
 
 
@@ -652,7 +718,7 @@ void showDeviceStatus() {
 
 // Publish Voltage, Current , Power consumption
 void publishBAMOpower(BAMOCar* bamocar) {
-  unsigned long long unixTimestamp = syncTime_getRelative(DEVICE_UNIX_TIME);
+  unsigned long long unixTimestamp = syncTime_getElapse(DEVICE_UNIX_TIME);
 
   if (unixTimestamp < 1000000000000ULL) return;
 
@@ -706,7 +772,7 @@ void publishBAMOpower(BAMOCar* bamocar) {
 }
 // Publihs controller, and sensed Motor temp
 void publishBAMOtemp(BAMOCar* bamocar) {
-  unsigned long long unixTimestamp = syncTime_getRelative(DEVICE_UNIX_TIME);
+  unsigned long long unixTimestamp = syncTime_getElapse(DEVICE_UNIX_TIME);
   // timeout function
   if (unixTimestamp < 1000000000000ULL) return;
 
@@ -746,7 +812,7 @@ void publishBAMOtemp(BAMOCar* bamocar) {
 }
 
 void publishMechData(Mechanical* MechSensors) {
-  unsigned long long unixTimestamp = syncTime_getRelative(DEVICE_UNIX_TIME);
+  unsigned long long unixTimestamp = syncTime_getElapse(DEVICE_UNIX_TIME);
   if (unixTimestamp < 1000000000000ULL) return;
 
   // Left wheel RPM
@@ -805,7 +871,7 @@ void publishMechData(Mechanical* MechSensors) {
 }
 
 void publishElectData(Electrical* ElectSensors) {
-  unsigned long long unixTimestamp = syncTime_getRelative(DEVICE_UNIX_TIME);
+  unsigned long long unixTimestamp = syncTime_getElapse(DEVICE_UNIX_TIME);
   if (unixTimestamp < 1000000000000ULL) return;
 
   // Current Sense
@@ -863,7 +929,7 @@ void publishElectData(Electrical* ElectSensors) {
 }
 
 void publishElectFaultState(Electrical* ElectSensors) {
-  unsigned long long unixTimestamp = syncTime_getRelative(DEVICE_UNIX_TIME);
+  unsigned long long unixTimestamp = syncTime_getElapse(DEVICE_UNIX_TIME);
   if (unixTimestamp < 1000000000000ULL) {
     Serial.println("========================================================");
     return;}

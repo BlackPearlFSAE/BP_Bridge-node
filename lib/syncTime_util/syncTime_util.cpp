@@ -1,16 +1,18 @@
 #include <Arduino.h>
 #include <syncTime_util.h>
+#include <RTClib.h>  // For RTC_DS3231
+#include <sys/time.h>  // For settimeofday - ESP32 internal RTC
 
 // ============================================================================
 // CLEAN TIME SYSTEM - Source-Agnostic Unix Timestamp Management
 // ============================================================================
 
 // ABSOLUTE TIME (from external source - RTC/NTP/Server)
-// uint64_t deviceAbsoluteTime = 0;  // Unix timestamp
+// uint64_t localTime = 0;  // Unix timestamp
 // RELATIVE TIME (device uptime tracking)
-unsigned long deviceRelativeTime_syncPoint = 0;  // millis() when last synced
+unsigned long sync_point = 0;  // millis() when last synced
 // Sync status flag
-bool deviceTimeIsSynced = false;
+bool localTimeIsSynced = false;
 
 // ============================================================================
 // CORE TIME FUNCTIONS
@@ -18,12 +20,20 @@ bool deviceTimeIsSynced = false;
 
 /**
  * Set absolute time from ANY source (RTC, NTP, Server, Manual)
- * Accepts: Unix timestamp in milliseconds or nanosec
+ * Accepts: Unix timestamp in milliseconds
+ * Also sets ESP32 internal RTC via settimeofday()
 **/
-void syncTime_setAbsolute(uint64_t &deviceAbsoluteTime , uint64_t unixTimeMs) {
-  deviceAbsoluteTime = unixTimeMs;
-  deviceRelativeTime_syncPoint = millis();  // Mark sync point
-  deviceTimeIsSynced = true;
+void syncTime(uint64_t &localTime , uint64_t Timesource_ms) {
+  // Set ESP32 internal RTC via settimeofday
+  struct timeval tv = {
+    .tv_sec = (time_t)(Timesource_ms / 1000ULL),
+    .tv_usec = (suseconds_t)((Timesource_ms % 1000ULL) * 1000)
+  };
+  settimeofday(&tv, nullptr);
+
+  localTime = Timesource_ms;
+  sync_point = millis();  // Mark sync point
+  localTimeIsSynced = true;
 }
 
 /**
@@ -31,15 +41,15 @@ void syncTime_setAbsolute(uint64_t &deviceAbsoluteTime , uint64_t unixTimeMs) {
  * Returns: Unix timestamp in milliseconds
  * This auto-calculates elapsed time since last sync
  */
-uint64_t syncTime_getRelative(uint64_t deviceAbsoluteTime) {
-  if (!deviceTimeIsSynced) {
+uint64_t syncTime_getElapse(uint64_t localTime) {
+  if (!localTimeIsSynced) {
     // Not synced - return device uptime
     return (uint64_t)millis();
   }
 
   // Calculate elapsed time since sync
-  unsigned long elapsed = millis() - deviceRelativeTime_syncPoint;
-  return deviceAbsoluteTime + (uint64_t)elapsed;
+  unsigned long elapsed = millis() - sync_point;
+  return localTime + (uint64_t)elapsed;
 }
 
 /**
@@ -47,33 +57,7 @@ uint64_t syncTime_getRelative(uint64_t deviceAbsoluteTime) {
  * Returns: true if synced with external source, false if using millis()
  */
 bool syncTime_isSynced() {
-  return deviceTimeIsSynced;
-}
-
-/**
- * Resync with drift checking (optional - prevents unnecessary resyncs)
- * Only updates if drift exceeds threshold (default: 1 second)
- * Returns: true if resynced, false if skipped
- */
-bool syncTime_resync(uint64_t &deviceAbsoluteTime,uint64_t newUnixTimeMs, uint64_t driftThreshold_ms) {
-  if (!deviceTimeIsSynced) {
-    // First sync - always accept
-    syncTime_setAbsolute(deviceAbsoluteTime,newUnixTimeMs);
-    return true;
-  }
-
-  // Check drift
-  uint64_t currentTime = syncTime_getRelative(newUnixTimeMs);
-  int64_t drift = (int64_t)newUnixTimeMs - (int64_t)currentTime;
-
-  if (llabs(drift) >= (long long)driftThreshold_ms) {
-    // Drift exceeded - resync
-    syncTime_setAbsolute(deviceAbsoluteTime,newUnixTimeMs);
-    return true;
-  }
-
-  // Drift within tolerance - skip resync
-  return false;
+  return localTimeIsSynced;
 }
 
 // ============================================================================
@@ -109,4 +93,44 @@ void syncTime_formatUnix(char* outBuf, uint64_t unixMs, int timezoneOffsetHours)
  */
 void syncTime_formatUnix_UTC(char* outBuf, uint64_t unixMs) {
   syncTime_formatUnix(outBuf, unixMs, 0);
+}
+
+// ============================================================================
+// EXTERNAL TIME SYNC (Server/NTP with optional RTC write-back)
+// ============================================================================
+
+/**
+ * Get current drift between device time and external source
+ * Returns: drift in ms (positive = device ahead, negative = device behind)
+ */
+int64_t syncTime_getDrift(uint64_t localTime, uint64_t TimeSource_ms) {
+  uint64_t currentTime = syncTime_getElapse(localTime);
+  return (int64_t)currentTime - (int64_t)TimeSource_ms;
+}
+
+/**
+ * Sync from external source (Server/NTP) with optional RTC write-back
+ * Only syncs if drift exceeds threshold
+ */
+bool syncTime_fromExternal(uint64_t &localTime, uint64_t TimeSource_ms,
+                           void* rtcPtr, uint64_t driftThreshold_ms) {
+  // Check drift first
+  int64_t drift = syncTime_getDrift(localTime, TimeSource_ms);
+
+  if (llabs(drift) < (long long)driftThreshold_ms) {
+    return false;  // Drift within tolerance, skip sync
+  }
+
+  // Update device time
+  syncTime(localTime, TimeSource_ms);
+
+  // Update RTC hardware if provided
+  if (rtcPtr != nullptr) {
+    RTC_DS3231* rtc = static_cast<RTC_DS3231*>(rtcPtr);
+    uint32_t unixSec = TimeSource_ms / 1000ULL;
+    rtc->adjust(DateTime(unixSec));
+    Serial.println("[TimeSync] RTC hardware updated");
+  }
+
+  return true;
 }
