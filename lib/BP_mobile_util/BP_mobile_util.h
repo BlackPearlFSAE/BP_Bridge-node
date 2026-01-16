@@ -1,5 +1,10 @@
 #include <stddef.h> // for size_t
 #include <cstdint>
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+
+// External Serial mutex (defined in node.cpp) - prevents garbled output across cores
+extern SemaphoreHandle_t serialMutex;
 
 typedef struct {
   bool isRegistered = false;

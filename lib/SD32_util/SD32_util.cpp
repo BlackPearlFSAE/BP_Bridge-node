@@ -6,23 +6,33 @@
 #include <SD32_util.h>
 
 // ============================================================================
-// PERSISTENT FILE HANDLE - Solution 1 & 2
+// PERSISTENT FILE HANDLE - Solution 1 & 2 (Single File)
 // ============================================================================
 static File _persistentFile;
 static bool _persistentFileOpen = false;
 static unsigned long _lastFlushTime = 0;
+
+// ============================================================================
+// MULTI-FILE PERSISTENT HANDLE (Array of Files)
+// ============================================================================
+static File _persistentFiles[SD32_MAX_PERSISTENT_FILES];
+static bool _persistentFilesOpen[SD32_MAX_PERSISTENT_FILES];
+static int _openFileCount = 0;
+static bool _arrayInitialized = false;
 
 void SD32_getSDsize(){
   uint64_t cardSize = SD.cardSize() / (1024 * 1024);
   Serial.printf("SD Card Size: %lluMB\n", cardSize);
 }
 
-void SD32_initSDCard(int sd_sck, int sd_miso, int sd_mosi, int sd_cs,bool &sdCardReady) { 
+void SD32_initSDCard(int sd_sck, int sd_miso, int sd_mosi, int sd_cs,bool &sdCardReady) {
   Serial.println("--- SD Card Initialization ---");
   Serial.print("Initializing SD card...");
   SPI.begin(sd_sck, sd_miso, sd_mosi, sd_cs);
-  
-  if (!SD.begin(sd_cs)) {
+
+  // Use custom SPI with increased max_files (default is 5, we need ~10+ for multi-file logging)
+  // SD.begin(cs, spi, frequency, mountpoint, max_files, format_if_failed)
+  if (!SD.begin(sd_cs, SPI, 4000000, "/sd", 20, false)) {
     Serial.println(" FAILED!");
     Serial.println("SD card logging disabled.");
     Serial.println("Check:");
@@ -33,6 +43,7 @@ void SD32_initSDCard(int sd_sck, int sd_miso, int sd_mosi, int sd_cs,bool &sdCar
     return;
   }
   Serial.println(" SUCCESS!");
+  Serial.println("[SD Card] max_files set to 20");
   sdCardReady = true;
   
   // // Display card info
@@ -62,7 +73,7 @@ bool SD32_checkSDconnect(){
 }
 
 // ============================================================================
-// PERSISTENT FILE FUNCTIONS (Solution 1 & 2)
+// PERSISTENT FILE FUNCTIONS
 // ============================================================================
 
 bool SD32_openPersistentFile(fs::FS &fs, const char* filepath) {
@@ -126,6 +137,132 @@ void SD32_appendBulkDataPersistent(AppenderFunc* appenders, void** dataArray, si
   }
 }
 
+// ============================================================================
+// MULTI-FILE PERSISTENT FUNCTIONS
+// ============================================================================
+
+void SD32_initPersistentFileArray() {
+  for (int i = 0; i < SD32_MAX_PERSISTENT_FILES; i++) {
+    _persistentFilesOpen[i] = false;
+  }
+  _openFileCount = 0;
+  _arrayInitialized = true;
+  Serial.println("[SD Card] Persistent file array initialized");
+}
+
+int SD32_openPersistentFileArray(fs::FS &fs, const char* filepath) {
+  if (!_arrayInitialized) {
+    SD32_initPersistentFileArray();
+  }
+
+  // Find first available slot
+  int slot = -1;
+  for (int i = 0; i < SD32_MAX_PERSISTENT_FILES; i++) {
+    if (!_persistentFilesOpen[i]) {
+      slot = i;
+      break;
+    }
+  }
+
+  if (slot == -1) {
+    Serial.println("[SD Card] ERROR: No available file slots!");
+    return -1;
+  }
+
+  _persistentFiles[slot] = fs.open(filepath, FILE_APPEND);
+  if (!_persistentFiles[slot]) {
+    Serial.printf("[SD Card] ERROR: Could not open file: %s\n", filepath);
+    return -1;
+  }
+
+  _persistentFilesOpen[slot] = true;
+  _openFileCount++;
+  Serial.printf("[SD Card] Opened file[%d]: %s\n", slot, filepath);
+  return slot;
+}
+
+void SD32_closePersistentFileByIndex(int index) {
+  if (index < 0 || index >= SD32_MAX_PERSISTENT_FILES) {
+    Serial.printf("[SD Card] ERROR: Invalid file index: %d\n", index);
+    return;
+  }
+
+  if (_persistentFilesOpen[index] && _persistentFiles[index]) {
+    _persistentFiles[index].flush();
+    _persistentFiles[index].close();
+    _persistentFilesOpen[index] = false;
+    _openFileCount--;
+    Serial.printf("[SD Card] Closed file[%d]\n", index);
+  }
+}
+
+void SD32_closeAllPersistentFiles() {
+  for (int i = 0; i < SD32_MAX_PERSISTENT_FILES; i++) {
+    if (_persistentFilesOpen[i] && _persistentFiles[i]) {
+      _persistentFiles[i].flush();
+      _persistentFiles[i].close();
+      _persistentFilesOpen[i] = false;
+    }
+  }
+  _openFileCount = 0;
+  Serial.println("[SD Card] All persistent files closed");
+}
+
+bool SD32_isPersistentFileOpenByIndex(int index) {
+  if (index < 0 || index >= SD32_MAX_PERSISTENT_FILES) {
+    return false;
+  }
+  return _persistentFilesOpen[index];
+}
+
+int SD32_getOpenFileCount() {
+  return _openFileCount;
+}
+
+void SD32_appendToPersistentFile(int index, AppenderFunc appender, void* data) {
+  if (index < 0 || index >= SD32_MAX_PERSISTENT_FILES) {
+    Serial.printf("[SD Card] ERROR: Invalid file index: %d\n", index);
+    return;
+  }
+
+  if (!_persistentFilesOpen[index] || !_persistentFiles[index]) {
+    Serial.printf("[SD Card] ERROR: File[%d] not open!\n", index);
+    return;
+  }
+
+  appender(_persistentFiles[index], data);
+}
+
+void SD32_flushPersistentFileByIndex(int index) {
+  if (index < 0 || index >= SD32_MAX_PERSISTENT_FILES) {
+    return;
+  }
+
+  if (_persistentFilesOpen[index] && _persistentFiles[index]) {
+    _persistentFiles[index].flush();
+  }
+}
+
+void SD32_flushAllPersistentFiles() {
+  for (int i = 0; i < SD32_MAX_PERSISTENT_FILES; i++) {
+    if (_persistentFilesOpen[i] && _persistentFiles[i]) {
+      _persistentFiles[i].flush();
+    }
+  }
+}
+
+File* SD32_getPersistentFile(int index) {
+  if (index < 0 || index >= SD32_MAX_PERSISTENT_FILES) {
+    return nullptr;
+  }
+
+  if (!_persistentFilesOpen[index]) {
+    return nullptr;
+  }
+
+  return &_persistentFiles[index];
+}
+
 void SD32_createCSVFile(char* csvFilename, const char* csvHeader){
   File dataFile = SD.open((const char*)csvFilename, FILE_WRITE);
   
@@ -140,24 +277,32 @@ void SD32_createCSVFile(char* csvFilename, const char* csvHeader){
   }
 
 }
-// Pass unique file name in
+// Pass unique file name in (default prefix: "datalog")
 void SD32_generateUniqueFilename(int &sessionNumber, char* csvFilename) {
+  SD32_generateUniqueFilename(sessionNumber, csvFilename, "datalog");
+}
+
+// Overload with custom prefix
+void SD32_generateUniqueFilename(int &sessionNumber, char* csvFilename, const char* prefix) {
   // Find the next available session number
   sessionNumber = 0;
-  
+
+  // Build search pattern from prefix
+  String searchPrefix = String(prefix) + "_";
+  int prefixLen = searchPrefix.length();
+
   // Check existing files and find the highest session number
   File root = SD.open("/");
   if (root) {
     File entry = root.openNextFile();
     while (entry) {
       String filename = entry.name();
-      // Look for files matching pattern: datalog_NNN.csv
-      if (filename.startsWith("datalog_") && filename.endsWith(".csv")) {
+      // Look for files matching pattern: prefix_NNN.csv
+      if (filename.startsWith(searchPrefix) && filename.endsWith(".csv")) {
         // Extract the number
-        int startIdx = 8;  // Length of "datalog_"
         int endIdx = filename.indexOf(".csv");
-        if (endIdx > startIdx) {
-          String numStr = filename.substring(startIdx, endIdx);
+        if (endIdx > prefixLen) {
+          String numStr = filename.substring(prefixLen, endIdx);
           int fileNum = numStr.toInt();
           if (fileNum >= sessionNumber) {
             sessionNumber = fileNum + 1;
@@ -168,18 +313,64 @@ void SD32_generateUniqueFilename(int &sessionNumber, char* csvFilename) {
       entry = root.openNextFile();
     }
     root.close();
-
   }
-  
+
   // Generate filename with 3-digit session number
   char buffer[32];
-  snprintf(buffer, sizeof(buffer), "/datalog_%03d.csv", sessionNumber);
-  // Copy into provided destination safely (caller must provide writable buffer)
-  strncpy(csvFilename, buffer, sizeof(buffer) - 1);
-  csvFilename[sizeof(buffer) - 1] = '\0';
+  snprintf(buffer, sizeof(buffer), "/%s_%03d.csv", prefix, sessionNumber);
+  strncpy(csvFilename, buffer, 31);
+  csvFilename[31] = '\0';
 
   Serial.print("Generated unique filename: ");
   Serial.println(csvFilename);
+}
+
+// Create session directory with auto-incrementing number
+void SD32_createSessionDir(int &sessionNumber, char* dirPath) {
+  sessionNumber = 0;
+
+  // Check existing directories and find the highest session number
+  File root = SD.open("/");
+  if (root) {
+    File entry = root.openNextFile();
+    while (entry) {
+      if (entry.isDirectory()) {
+        String dirname = entry.name();
+        // Look for directories matching pattern: session_NNN
+        if (dirname.startsWith("session_")) {
+          int prefixLen = 8;  // Length of "session_"
+          String numStr = dirname.substring(prefixLen);
+          int dirNum = numStr.toInt();
+          if (dirNum >= sessionNumber) {
+            sessionNumber = dirNum + 1;
+          }
+        }
+      }
+      entry.close();
+      entry = root.openNextFile();
+    }
+    root.close();
+  }
+
+  // Generate directory path
+  snprintf(dirPath, 32, "/session_%03d", sessionNumber);
+
+  // Create the directory
+  if (SD.mkdir(dirPath)) {
+    Serial.printf("[SD Card] Session directory created: %s\n", dirPath);
+  } else {
+    Serial.printf("[SD Card] Failed to create directory: %s\n", dirPath);
+  }
+}
+
+// Generate filepath inside a directory
+void SD32_generateFilenameInDir(char* filepath, const char* dirPath, const char* prefix, int index) {
+  if (index >= 0) {
+    snprintf(filepath, 48, "%s/%s_%03d.csv", dirPath, prefix, index);
+  } else {
+    // No index (e.g., for ams_summary.csv)
+    snprintf(filepath, 48, "%s/%s.csv", dirPath, prefix);
+  }
 }
 
 
@@ -403,4 +594,3 @@ void SD32_testFileIO(fs::FS &fs, const char *path) {
   Serial.printf("%u bytes written for %lu ms\n", 2048 * 512, end);
   file.close();
 }
-

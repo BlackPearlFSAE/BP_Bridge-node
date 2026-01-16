@@ -5,75 +5,76 @@
 uint8_t pdmslimit = 1;
 
 // No BUS ID Filter (Accept all)
-void CAN32_initCANBus(int can_tx,int can_rx, bool &readyflag,twai_timing_config_t t_config) {
+bool CAN32_initCANBus(int can_tx,int can_rx,
+                twai_timing_config_t t_config) {
   Serial.println("--- CAN Bus Initialization ---");
   Serial.print("Initializing CAN bus...");
   
   // Configure CAN timing for 250 kbps (as per your code)
   twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT((gpio_num_t)can_tx,(gpio_num_t)can_rx,TWAI_MODE_NORMAL);
   twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
+  g_config.rx_queue_len = 32;
+  g_config.tx_queue_len = 6;
   // Install TWAI driver
   if (twai_driver_install(&g_config, &t_config, &f_config) == ESP_OK) {
     Serial.println(" Driver installed");
   } else {
     Serial.println(" FAILED to install driver!");
-    readyflag = false;
-    return;
+    return false;
   }
   
   // Start TWAI driver
   if (twai_start() == ESP_OK) {
     Serial.println("CAN bus started successfully!");
-    readyflag = true;
     delay(500);
+    return true;
   } else {
     Serial.println("FAILED to start CAN bus!");
-    readyflag = false;
+    return false;
   }
-  Serial.println();
 }
 // With BUS ID Filter
-void CAN32_initCANBus(int can_tx,int can_rx, bool &readyflag,
+bool CAN32_initCANBus(int can_tx,int can_rx,
                 twai_timing_config_t t_config, twai_filter_config_t f_config) {
   Serial.println("--- CAN Bus Initialization ---");
   Serial.print("Initializing CAN bus...");
   
   // Configure CAN timing for 250 kbps (as per your code)
   twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT((gpio_num_t)can_tx,(gpio_num_t)can_rx,TWAI_MODE_NORMAL);
+  g_config.rx_queue_len = 32;
+  g_config.tx_queue_len = 32;
   // Install TWAI driver
   if (twai_driver_install(&g_config, &t_config, &f_config) == ESP_OK) {
     Serial.println(" Driver installed");
   } else {
     Serial.println(" FAILED to install driver!");
-    readyflag = false;
-    return;
+    return false;
   }
   
   // Start TWAI driver
   if (twai_start() == ESP_OK) {
     Serial.println("CAN bus started successfully!");
-    readyflag = true;
     delay(500);
+    return true;
   } else {
     Serial.println("FAILED to start CAN bus!");
-    readyflag = false;
+    return false;
   }
-  Serial.println();
 }
 
 // SENDING STD message
-int CAN32_sendCAN(twai_message_t* tx_msg) {
-  // Transmit and store in sending status
+int CAN32_sendCAN(twai_message_t* tx_msg, bool canbusready) {
+  if(!canbusready) return ESP_FAIL;
   int canSend_status = twai_transmit(tx_msg, pdMS_TO_TICKS(pdmslimit));
   // Serial.printf("Send - ID: 0x%X, DLC: %d, Data: ", tx_msg->identifier, tx_msg->data_length_code);
   return canSend_status;
-  // Error Handling will be for user.
 }
 
 // SENDING EXT message (Wait, we just adjust its ID flag)
 
 // Polling CAN Reading
-int CAN32_receiveCAN(twai_message_t* rx_msg){
+int CAN32_receiveCAN(twai_message_t* rx_msg, bool canbusready) {
+  if(!canbusready) return ESP_FAIL;
   int canReceive_status = twai_receive(rx_msg, pdMS_TO_TICKS(pdmslimit));
   // Serial.printf("Received - ID: 0x%X, DLC: %d, Data: ", rx_msg->identifier, rx_msg->data_length_code);
   return canReceive_status;
@@ -119,4 +120,12 @@ void CAN32_twai_debug(uint32_t alerts_trigger){
     Serial.print("TX Errors TEC: "); Serial.println(status_info.tx_error_counter);
  
   }
+}
+
+// It will block CAN communication , use it very minimally
+void CAN32_debugFrame(twai_message_t* rx_msg){
+  Serial.printf("ID 0x%X: ", rx_msg->identifier);
+  for (int i = 0; i < rx_msg->data_length_code; i++) 
+      Serial.printf("%X",rx_msg->data[i]);
+  Serial.println();
 }
