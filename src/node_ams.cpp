@@ -1,3 +1,13 @@
+/* BMS Data Logger - AMS Node
+ *
+ * ESP32-S3 BMS data logger for Formula Student vehicle telemetry.
+ * - Core 0: WiFi/WebSocket communication (BPMobile)
+ * - Core 1: SD logging
+ *
+ * Platform: ESP32-S3 | Framework: Arduino + FreeRTOS
+ */
+
+/************************* Includes ***************************/
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h"
 #include <Arduino.h>
@@ -9,12 +19,10 @@
 #include <ArduinoJson.h>
 #include <RTClib.h>
 
-// FreeRTOS for multi-core task management
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 
-// Helper function
 #include "BP_mobile_util.h"
 #include "SD32_util.h"
 #include "WIFI32_util.h"
@@ -22,9 +30,9 @@
 #include "RTClib_helper.h"
 #include "ams_config.h"
 
-// ============================================================================
-// BP MOBILE SERVER CONFIGURATION
-// ============================================================================
+/************************* Pin Definitions ***************************/
+
+// Network
 const char* ssid = "realme C55";
 const char* password = "realme1234";
 const char* serverHost = "10.18.211.132";
@@ -37,48 +45,47 @@ BPMobileConfig BPMobile(&webSockets, &webSocketStatus);
 WebSocketsClient* BPwebSocket = BPMobile.webSocket;
 socketstatus* BPsocketstatus = BPMobile.webSocketstatus;
 
-// ============================================================================
-// DEVICE BASE CONFIGURATION
-// ============================================================================
-// ---- LEDs
+// LEDs
 #define WIFI_LED 3
 #define WS_LED 4
 
-// ---- I2C
+// I2C
 #define I2C1_SDA 18
 #define I2C1_SCL 17
-bool I2C1_connect = false;
 
-// ---- SD SPI
+// SD SPI
 #define SD_CS_PIN 10
 #define SD_MOSI_PIN 11
 #define SD_MISO_PIN 13
 #define SD_SCK_PIN 12
 
-// ---- UART
+// UART
 #define UART0_BAUD 115200
 
-// ---- Timing configs
+/************************* Global Variables ***************************/
+
+// Peripherals
 RTC_DS3231 rtc;
+bool I2C1_connect = false;
 bool RTCavailable = false;
+bool sdCardReady = false;
+
+// Timing Intervals (ms)
+const unsigned long LOCAL_SYNC_INTERVAL = 1000;
+const unsigned long REMOTE_SYNC_INTERVAL = 60000;
+const unsigned long SD_APPEND_INTERVAL = 200;
+const unsigned long AMS_LOG_INTERVAL = 1000;
+const unsigned long SD_FLUSH_INTERVAL = 1000;
+const unsigned long SD_CLOSE_INTERVAL = 10000;
+
 unsigned long lastTimeSourceSync = 0;
 unsigned long lastExternalSync = 0;
 uint64_t RTC_UNIX_TIME = 0;
-const unsigned long LOCAL_SYNC_INTERVAL = 1000;
-const unsigned long REMOTE_SYNC_INTERVAL = 60000;
-
-// SD Card Timing Configuration
-bool sdCardReady = false;
 unsigned long lastSDLog = 0;
 int dataPoint = 1;
 int sessionNumber = 0;
 
-const unsigned long SD_APPEND_INTERVAL = 200;
-const unsigned long AMS_LOG_INTERVAL = 1000;    // AMS summary every 1 second
-const unsigned long SD_FLUSH_INTERVAL = 1000;
-const unsigned long SD_CLOSE_INTERVAL = 10000;
-
-// Session directory and file paths
+// SD Card
 char sessionDirPath[32] = {0};
 char bmuFilePaths[MODULE_NUM][48] = {0};
 char amsFilePath[48] = {0};
@@ -92,27 +99,32 @@ const char* header_BMU = "DataPoint,UnixTime,SessionTime,V_MODULE,TEMP1,TEMP2,DV
 const char* header_AMS = "DataPoint,UnixTime,SessionTime,ACCUM_VOLTAGE,ACCUM_MAXV,ACCUM_MINV,"
                          "AMS_OK,CHG_READY,OV_WARN,OV_CRIT,LV_WARN,LV_CRIT,OT_WARN,OT_CRIT,ODV_WARN,ODV_CRIT";
 
-// ---- Global Data
+// Sensor Data
 BMUdata BMU_Package[MODULE_NUM];
 AMSdata AMS_Package;
 
-// ============================================================================
-// BPMOBILE PUBLISHING CONFIG
-// ============================================================================
+// Sampling Rates (Hz)
+const float BMU_CELLS_SAMPLING_RATE = 2.0;
+const float BMU_FAULT_SAMPLING_RATE = 1.0;
+const float AMS_DATA_SAMPLING_RATE = 0.5;
 
-const float BMU_CELLS_SAMPLING_RATE = 2.0;    // Hz - publish cell voltages
-const float BMU_FAULT_SAMPLING_RATE = 1.0;    // Hz - publish fault flags
-const float AMS_DATA_SAMPLING_RATE = 0.5;     // Hz - publish AMS summary
+/************************* Function Declarations ***************************/
 
-// Forward declarations for publishing
+// BPMobile Publishers
 void publishBMUcells(BMUdata* bmu, int moduleNum);
 void publishBMUfaults(BMUdata* bmu, int moduleNum);
 void publishAMSstate(AMSdata* ams);
 void registerClient(const char* clientName);
 
-// ============================================================================
-// FREERTOS
-// ============================================================================
+// File Management
+void mockBMUData();
+void append_BMU_toCSVFile(File& dataFile, BMUdata* bmu, int dp, uint64_t Timestamp, uint64_t session);
+void append_AMS_toCSVFile(File& dataFile, AMSdata* ams, int dp, uint64_t Timestamp, uint64_t session);
+void openAllFiles();
+void closeAllFiles();
+void flushAllFiles();
+
+/************************* FreeRTOS ***************************/
 
 SemaphoreHandle_t dataMutex = NULL;
 SemaphoreHandle_t serialMutex = NULL;  // For cross-core Serial prints
@@ -134,18 +146,7 @@ static File bmuFiles[MODULE_NUM];
 static File amsFile;
 static bool filesOpen = false;
 
-// Forward declarations
-void mockBMUData();
-void append_BMU_toCSVFile(File& dataFile, BMUdata* bmu, int dp, uint64_t Timestamp, uint64_t session);
-void append_AMS_toCSVFile(File& dataFile, AMSdata* ams, int dp, uint64_t Timestamp, uint64_t session);
-void openAllFiles();
-void closeAllFiles();
-void flushAllFiles();
-
-// ============================================================================
-// BPMOBILE TASK - Runs on Core 0
-// ============================================================================
-
+// Core 0: WiFi/WebSocket Task
 void BPMobileTask(void* parameter) {
   // Task-local timing variables
   unsigned long taskLastBMUcells = 0;
@@ -205,10 +206,7 @@ void BPMobileTask(void* parameter) {
   }
 }
 
-// ============================================================================
-// SD TASK - Runs on Core 1
-// ============================================================================
-
+// Core 1: SD Card Logger Task
 void sdTask(void* parameter) {
   SDLogEntry entry;
   unsigned long lastFlushTime = 0;
@@ -251,9 +249,7 @@ void sdTask(void* parameter) {
   }
 }
 
-// ============================================================================
-// SETUP
-// ============================================================================
+/************************* Setup ***************************/
 
 void setup() {
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); // Disable brownout detector
@@ -370,9 +366,7 @@ void setup() {
   Serial.println("==================================================");
 }
 
-// ============================================================================
-// MAIN LOOP
-// ============================================================================
+/************************* Main Loop ***************************/
 
 #define MOCK_DATA
 
@@ -466,9 +460,8 @@ void loop() {
   delay(10);
 }
 
-// ============================================================================
-// FILE MANAGEMENT
-// ============================================================================
+/************************* File Management ***************************/
+
 void openAllFiles() {
   for (int i = 0; i < MODULE_NUM; i++) {
     bmuFiles[i] = SD.open(bmuFilePaths[i], FILE_APPEND);
@@ -510,9 +503,7 @@ void flushAllFiles() {
   }
 }
 
-// ============================================================================
-// CSV APPENDER FUNCTIONS
-// ============================================================================
+/************************* CSV Appenders ***************************/
 
 void append_BMU_toCSVFile(File& dataFile, BMUdata* bmu, int dp, uint64_t Timestamp, uint64_t session) {
   // DataPoint, UnixTime, SessionTime
@@ -573,9 +564,8 @@ void append_AMS_toCSVFile(File& dataFile, AMSdata* ams, int dp, uint64_t Timesta
   dataFile.print(ams->OVERDIV_WARNING ? 1 : 0); dataFile.print(",");
   dataFile.println(ams->OVERDIV_CRITICAL ? 1 : 0);
 }
-// ============================================================================
-// BPMOBILE PUBLISHING FUNCTIONS
-// ============================================================================
+
+/************************* BPMobile Publishers ***************************/
 
 void registerClient(const char* name) {
   JsonDocument doc;

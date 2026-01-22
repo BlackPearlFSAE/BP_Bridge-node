@@ -1,5 +1,4 @@
-/**
- * BP Bridge Sensor Node - Production Build
+/* BP Bridge Sensor Node - Production Build
  *
  * ESP32-S3 dual-core sensor aggregator for Formula Student vehicle telemetry.
  * - Core 0: WiFi/WebSocket communication (BPMobile)
@@ -8,6 +7,7 @@
  * Platform: ESP32-S3 | Framework: Arduino + FreeRTOS
  */
 
+/************************* Includes ***************************/
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h"
 #include <Arduino.h>
@@ -38,17 +38,7 @@
 #include <motion_sensors.h>
 #include <base_sensors.h>
 
-// ============================================================================
-// DEVICE BASE CONFIGURATION
-// ============================================================================
-
-// Network
-const char* ssid = "realme C55";
-const char* password = "realme1234";
-const char* serverHost = "10.18.211.132";
-const int serverPort = 3000;
-const char* clientName = "ESP32 Rear";
-
+/************************* Pin Definitions ***************************/
 // Pin Definitions
 #define WIFI_LED 3
 #define WS_LED 4
@@ -91,32 +81,32 @@ int ElectPinArray[8] = {
   AMS_OK_PIN, IMD_OK_PIN, HV_ON_PIN, BSPD_OK_PIN
 };
 
-// Timing Intervals (ms)
-#define BAMOCarREQ_INTERVAL 200
-const unsigned long SD_APPEND_INTERVAL = 200;
-const unsigned long SD_FLUSH_INTERVAL = 1000;
-const unsigned long SD_CLOSE_INTERVAL = 10000;
-const unsigned long LOCAL_SYNC_INTERVAL = 1000;
-const unsigned long REMOTE_SYNC_INTERVAL = 60000;
-const unsigned long RPM_CalcInterval = 100;
+/************************* Global Variables ***************************/
 
-// Sampling Rates (Hz)
-const float BAMO_POWER_SAMPLING_RATE = 2.0;
-const float BAMO_TEMP_SAMPLING_RATE = 1.0;
-const float MECH_SENSORS_SAMPLING_RATE = 2.0;
-const float ELECT_SENSORS_SAMPLING_RATE = 2.0;
-const float ELECT_FAULT_STAT_SAMPLING_RATE = 1.0;
-
-// ============================================================================
-// GLOBAL OBJECTS
-// ============================================================================
-
-// WebSocket
+// WebSocket and Network config
+const char* ssid = DEFAULT_SSID;
+const char* password = DEFAULT_PASSWORD;
+const char* serverHost = DEFAULT_SERVER_HOST;
+const int serverPort = DEFAULT_SERVER_PORT;
+const char* clientName = "ESP32 Compile";
 WebSocketsClient webSockets;
 socketstatus webSocketStatus;
 BPMobileConfig BPMobile(&webSockets, &webSocketStatus);
 WebSocketsClient* BPwebSocket = BPMobile.webSocket;
 socketstatus* BPsocketstatus = BPMobile.webSocketstatus;
+
+// Sampling Rates (Hz)
+const float BAMO_POWER_SAMPLING_RATE = 2.0;
+const float BAMO_TEMP_SAMPLING_RATE = 2.0;
+const float MECH_SENSORS_SAMPLING_RATE = 2.0;
+const float ELECT_SENSORS_SAMPLING_RATE = 2.0;
+const float ELECT_FAULT_STAT_SAMPLING_RATE = 2.0;
+
+// Sensor Data
+Mechanical myMechData;
+Electrical myElectData;
+Odometry myOdometryData;
+BAMOCar myBAMOCar;
 
 // Peripherals
 HardwareSerial gpsSerial(1);
@@ -134,13 +124,15 @@ bool GPSavailable = false;
 bool IMUavailable = false;
 bool RTCavailable = false;
 
-// Sensor Data
-Mechanical myMechData;
-Electrical myElectData;
-Odometry myOdometryData;
-BAMOCar myBAMOCar;
+// Timing Intervals (ms)
+#define BAMOCarREQ_INTERVAL 200
+const unsigned long SD_APPEND_INTERVAL = 200;
+const unsigned long SD_FLUSH_INTERVAL = 1000;
+const size_t SD_MAX_FILE_SIZE = 2 * 1024 * 1024;  // 2MB - rotate to new file when exceeded
+const unsigned long LOCAL_SYNC_INTERVAL = 1000;
+const unsigned long REMOTE_SYNC_INTERVAL = 60000;
+const unsigned long RPM_CalcInterval = 100;
 
-// Timing
 unsigned long lastSDLog = 0;
 unsigned long lastBAMOrequest = 0;
 unsigned long lastTimeSourceSync = 0;
@@ -160,26 +152,9 @@ const char* header_BAMO = "BAMOVolt(V),BAMOAmp(A),BAMOPower(W),MotorTemp(C),BAMO
 char csvHeaderBuffer[350] = "";
 int appenderCount = 7;
 
-// FreeRTOS
-SemaphoreHandle_t dataMutex = NULL;
-SemaphoreHandle_t serialMutex = NULL;
-TaskHandle_t BPMobileTaskHandle = NULL;
-TaskHandle_t sdTaskHandle = NULL;
-QueueHandle_t sdQueue = NULL;
 
-struct SDLogEntry {
-  int dataPoint;
-  uint64_t unixTime;
-  uint64_t sessionTime;
-  Mechanical mech;
-  Electrical elect;
-  Odometry odom;
-  BAMOCar bamo;
-};
 
-// ============================================================================
-// FUNCTION PROTOTYPES
-// ============================================================================
+/************************* Function Declarations ***************************/
 
 // CSV Appenders
 void append_DataPoint_toCSVFile(File& dataFile, void* data);
@@ -201,9 +176,23 @@ void registerClient(const char* clientName);
 // Debug
 void showDeviceStatus();
 
-// ============================================================================
-// FREERTOS TASKS
-// ============================================================================
+/************************* FreeRTOS ***************************/
+
+SemaphoreHandle_t dataMutex = NULL;
+SemaphoreHandle_t serialMutex = NULL;
+TaskHandle_t BPMobileTaskHandle = NULL;
+TaskHandle_t sdTaskHandle = NULL;
+QueueHandle_t sdQueue = NULL;
+
+struct SDLogEntry {
+  int dataPoint;
+  uint64_t unixTime;
+  uint64_t sessionTime;
+  Mechanical mech;
+  Electrical elect;
+  Odometry odom;
+  BAMOCar bamo;
+};
 
 // Core 0: WiFi/WebSocket Task
 void BPMobileTask(void* parameter) {
@@ -224,8 +213,8 @@ void BPMobileTask(void* parameter) {
       BPwebSocket->loop();
     }
 
-    digitalWrite(WIFI_LED, WiFi.status() == WL_CONNECTED);
-    digitalWrite(WS_LED, BPsocketstatus->isConnected);
+    // digitalWrite(WIFI_LED, WiFi.status() == WL_CONNECTED);
+    // digitalWrite(WS_LED, BPsocketstatus->isConnected);
 
     if (BPsocketstatus->isRegistered && BPsocketstatus->isConnected) {
       if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
@@ -264,19 +253,20 @@ void BPMobileTask(void* parameter) {
 // Core 1: SD Card Logger Task
 void sdTask(void* parameter) {
   SDLogEntry entry;
-  unsigned long lastCloseTime = 0;
   int localDataPoint = 0;
 
   while (true) {
     if (xQueueReceive(sdQueue, &entry, portMAX_DELAY) == pdTRUE) {
       if (!sdCardReady || !SD32_isPersistentFileOpen()) continue;
 
-      unsigned long now = millis();
-      if (now - lastCloseTime >= SD_CLOSE_INTERVAL) {
+      // Size-based rotation: create new file when current exceeds limit
+      if (SD32_getPersistentFileSize() >= SD_MAX_FILE_SIZE) {
         SD32_closePersistentFile();
-        SD32_openPersistentFile(SD, csvFilename);
-        lastCloseTime = now;
-        Serial.printf("[SD] File rotated -> %s\n", csvFilename);
+        sessionNumber++;
+        snprintf(csvFilename, 32, "/datalog_%03d.csv", sessionNumber);
+        SD32_createCSVFile(csvFilename, csvHeaderBuffer);
+        SD32_openPersistentFile(csvFilename);
+        Serial.printf("[SD] Size limit reached, rotated to: %s\n", csvFilename);
       }
 
       AppenderFunc appenders[appenderCount] = {
@@ -300,12 +290,9 @@ void sdTask(void* parameter) {
   }
 }
 
-// ============================================================================
-// SETUP
-// ============================================================================
+/************************* Setup ***************************/
 
-#define MOCK_FLAG 0
-
+#define MOCK_FLAG 1
 void setup() {
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
   Serial.begin(UART0_BAUD);
@@ -317,13 +304,13 @@ void setup() {
   Wire.setTimeout(2);
 
   // LED Init
-  pinMode(WIFI_LED, OUTPUT);
-  pinMode(WS_LED, OUTPUT);
-  digitalWrite(WIFI_LED, 0);
-  digitalWrite(WS_LED, 0);
+  // pinMode(WIFI_LED, OUTPUT);
+  // pinMode(WS_LED, OUTPUT);
+  // digitalWrite(WIFI_LED, 0);
+  // digitalWrite(WS_LED, 0);
 
   // CAN Bus Init
-  CAN32_initCANBus(CAN_TX_PIN, CAN_RX_PIN, canBusReady,
+  canBusReady = CAN32_initCANBus(CAN_TX_PIN, CAN_RX_PIN,
     TWAI_TIMING_CONFIG_250KBITS(), TWAI_FILTER_CONFIG_ACCEPT_ALL());
 
   // RTC Init
@@ -361,7 +348,7 @@ void setup() {
   strcat(csvHeaderBuffer, ",");
   strcat(csvHeaderBuffer, header_BAMO);
   SD32_createCSVFile(csvFilename, csvHeaderBuffer);
-  if (sdCardReady) SD32_openPersistentFile(SD, csvFilename);
+  if (sdCardReady) SD32_openPersistentFile(csvFilename);
 
   // Time Sync
   // RTCcalibrate(rtc,WiFi32_getNTPTime()/1000ULL,RTCavailable);
@@ -386,11 +373,10 @@ void setup() {
   Serial.println("[RTOS] SD Logger task on Core 1");
 }
 
-// ============================================================================
-// MAIN LOOP
-// ============================================================================
+/************************* Main Loop ***************************/
 
 void loop() {
+
   uint64_t SESSION_TIME_MS = millis();
 
   // Time Sync: fetch RTC DS3231 every 1s 
@@ -399,15 +385,15 @@ void loop() {
     Time_placeholder = (uint64_t)RTC_getUnix(rtc,RTCavailable)*1000ULL;
     lastTimeSourceSync = SESSION_TIME_MS;
   }
-  // Set syncpoint , and calculate UnixTime_ms + ElapseTime_ms 
+  // Set syncpoint, and calculate UnixTime_ms + ElapseTime_ms 
   if (Time_placeholder > 0) syncTime_setSyncPoint(RTC_UNIX_TIME, Time_placeholder);
   uint64_t CURRENT_UNIX_TIME_MS = syncTime_calcRelative_ms(RTC_UNIX_TIME);
   /* DEBUG TIME */
-  // char timeBuf[32];
-  // syncTime_formatUnix(timeBuf, CURRENT_UNIX_TIME_MS, 7);  // UTC+7
-  // Serial.println(timeBuf);
-  // // Serial.println(CURRENT_UNIX_TIME_MS);
-  // return;
+    // char timeBuf[32];
+    // syncTime_formatUnix(timeBuf, CURRENT_UNIX_TIME_MS, 7);  // UTC+7
+    // Serial.println(timeBuf);
+    // // Serial.println(CURRENT_UNIX_TIME_MS);
+    // return;
 
   // Time Sync: Remote source -> DS3231 (60s period)
   if (SESSION_TIME_MS - lastExternalSync >= REMOTE_SYNC_INTERVAL) {
@@ -486,7 +472,7 @@ void loop() {
     }
   #endif
 
-  // SD Card Health Check
+  // SD card close file once remove
   if (sdCardReady && !SD32_checkSDconnect()) {
     SD32_closePersistentFile();
     sdCardReady = false;
@@ -515,11 +501,10 @@ void loop() {
     }
     lastSDLog = SESSION_TIME_MS;
   }
+
 }
 
-// ============================================================================
-// DEBUG
-// ============================================================================
+/************************* Debug Functions ***************************/
 
 void showDeviceStatus() {
   Serial.println("╔═════════════════════════════════════════════╗");
@@ -539,9 +524,7 @@ void showDeviceStatus() {
   Serial.println("╚═════════════════════════════════════════════╝");
 }
 
-// ============================================================================
-// BPMOBILE PUBLISHERS
-// ============================================================================
+/************************* BPMobile Publishers ***************************/
 
 void publishBAMOpower(BAMOCar* bamocar) {
   uint64_t timestamp = syncTime_calcRelative_ms(RTC_UNIX_TIME);
@@ -862,9 +845,7 @@ void registerClient(const char* clientName) {
   BPwebSocket->sendTXT(registration);
 }
 
-// ============================================================================
-// CSV APPENDERS
-// ============================================================================
+/************************* CSV Appenders ***************************/
 
 void append_DataPoint_toCSVFile(File& dataFile, void* data) {
   int* dp = (int*)data;

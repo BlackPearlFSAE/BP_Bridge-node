@@ -3,6 +3,13 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
+// Network
+#define DEFAULT_SSID "realme C55"
+#define DEFAULT_PASSWORD "realme1234"
+#define DEFAULT_SERVER_HOST "10.18.211.132"
+#define DEFAULT_SERVER_PORT 3000
+#define DEFAULT_CLIENT_NAME "ESP32"
+
 // External Serial mutex (defined in node.cpp) - prevents garbled output across cores
 extern SemaphoreHandle_t serialMutex;
 
