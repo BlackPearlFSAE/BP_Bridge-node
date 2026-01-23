@@ -150,3 +150,22 @@ void mockElectricalData(Electrical *ElectSensors) {
   ElectSensors->HV_ON = random(0, 10) > 2;     // 80% ON
   ElectSensors->BSPD_OK = random(0, 10) > 1;   // 90% OK
 }
+
+// --- TELEPLOT DEBUG FUNCTIONS ---
+void teleplotMechanical(Mechanical *MechSensors) {
+  Serial.printf(">Wheel_RPM_L:%.2f\n", MechSensors->Wheel_RPM_L);
+  Serial.printf(">Wheel_RPM_R:%.2f\n", MechSensors->Wheel_RPM_R);
+  Serial.printf(">STR_Heave_mm:%.2f\n", MechSensors->STR_Heave_mm);
+  Serial.printf(">STR_Roll_mm:%.2f\n", MechSensors->STR_Roll_mm);
+}
+
+void teleplotElectrical(Electrical *ElectSensors) {
+  Serial.printf(">I_SENSE:%.2f\n", ElectSensors->I_SENSE);
+  Serial.printf(">TMP:%.2f\n", ElectSensors->TMP);
+  Serial.printf(">APPS:%.2f\n", ElectSensors->APPS);
+  Serial.printf(">BPPS:%.2f\n", ElectSensors->BPPS);
+  Serial.printf(">AMS_OK:%d\n", ElectSensors->AMS_OK ? 1 : 0);
+  Serial.printf(">IMD_OK:%d\n", ElectSensors->IMD_OK ? 1 : 0);
+  Serial.printf(">HV_ON:%d\n", ElectSensors->HV_ON ? 1 : 0);
+  Serial.printf(">BSPD_OK:%d\n", ElectSensors->BSPD_OK ? 1 : 0);
+}

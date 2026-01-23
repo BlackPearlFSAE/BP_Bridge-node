@@ -44,10 +44,11 @@ int WiFi32_getRSSI() {
 // ============================================================================
 // NTP TIME FUNCTIONS
 // ============================================================================
-void WiFi32_initNTP(const char* ntpServer1, const char* ntpServer2, long gmtOffsetSec) {
+bool WiFi32_initNTP(const char* ntpServer1, const char* ntpServer2, long gmtOffsetSec) {
   configTime(gmtOffsetSec, 0, ntpServer1, ntpServer2);
   _ntpInitialized = true;
   Serial.println("[NTP] Initialized");
+  return _ntpInitialized;
 }
 
 uint64_t WiFi32_getNTPTime() {

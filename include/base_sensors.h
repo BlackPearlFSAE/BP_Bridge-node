@@ -62,3 +62,7 @@ void ElectSensorsUpdate(Electrical *ElectSensors,int* pinArrays);
 
 void mockMechanicalData(Mechanical *MechSensors);
 void mockElectricalData(Electrical *ElectSensors);
+
+// Teleplot debug functions
+void teleplotMechanical(Mechanical *MechSensors);
+void teleplotElectrical(Electrical *ElectSensors);

@@ -83,5 +83,7 @@ struct OBCdata {
   bool OBC_OK = 1;
 };
 
-
+// Teleplot debug functions
+void teleplotBMU(BMUdata *bmu, int moduleNum);
+void teleplotAMS(AMSdata *ams);
 

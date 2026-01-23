@@ -13,7 +13,7 @@ int  WiFi32_getRSSI();
 // ============================================================================
 // NTP TIME FUNCTIONS
 // ============================================================================
-void WiFi32_initNTP(const char* ntpServer1 = "pool.ntp.org",
+bool WiFi32_initNTP(const char* ntpServer1 = "pool.ntp.org",
                     const char* ntpServer2 = "time.nist.gov",
                     long gmtOffsetSec = 0);
 uint64_t WiFi32_getNTPTime();  // Returns Unix timestamp in ms, 0 if unavailable

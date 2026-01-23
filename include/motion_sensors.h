@@ -30,3 +30,6 @@ void IMUupdate(Odometry* myimu, MPU6050 mpu,bool &AvailableFlag);
 
 
 void mockOdometryData(Odometry *OdomSensors);
+
+// Teleplot debug function
+void teleplotOdometry(Odometry *OdomSensors);

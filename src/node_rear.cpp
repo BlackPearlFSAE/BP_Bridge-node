@@ -91,7 +91,7 @@ const char* ssid = DEFAULT_SSID;
 const char* password = DEFAULT_PASSWORD;
 const char* serverHost = DEFAULT_SERVER_HOST;
 const int serverPort = DEFAULT_SERVER_PORT;
-const char* clientName = "ESP32 Rear Node";
+const char* clientName = "Rear_Node";
 WebSocketsClient webSockets;
 socketstatus webSocketStatus;
 BPMobileConfig BPMobile(&webSockets, &webSocketStatus);
@@ -99,10 +99,10 @@ WebSocketsClient* BPwebSocket = BPMobile.webSocket;
 socketstatus* BPsocketstatus = BPMobile.webSocketstatus;
 
 // Sampling Rates (Hz)
-const float MECH_SENSORS_SAMPLING_RATE = 2.0;
-const float ELECT_SENSORS_SAMPLING_RATE = 2.0;
-const float ELECT_FAULT_STAT_SAMPLING_RATE = 2.0;
-const float ODOM_SENSORS_SAMPLING_RATE = 2.0;
+const float MECH_SENSORS_SAMPLING_RATE = DEFAULT_PUBLISH_RATE;
+const float ELECT_SENSORS_SAMPLING_RATE = DEFAULT_PUBLISH_RATE;
+const float ELECT_FAULT_STAT_SAMPLING_RATE = (DEFAULT_PUBLISH_RATE/5);
+const float ODOM_SENSORS_SAMPLING_RATE = DEFAULT_PUBLISH_RATE;
 
 // Sensor Data
 Mechanical myMechData;
@@ -125,7 +125,7 @@ bool IMUavailable = false;
 bool RTCavailable = false;
 
 // Timing Intervals (ms)
-const unsigned long SD_APPEND_INTERVAL = 200;
+const unsigned long SD_APPEND_INTERVAL = DEFAULT_SD_LOG_INTERVAL;
 const unsigned long SD_FLUSH_INTERVAL = 1000;
 const size_t SD_MAX_FILE_SIZE = 2 * 1024 * 1024;
 const unsigned long LOCAL_SYNC_INTERVAL = 1000;
@@ -135,6 +135,8 @@ const unsigned long RPM_CalcInterval = 100;
 unsigned long lastSDLog = 0;
 unsigned long lastTimeSourceSync = 0;
 unsigned long lastExternalSync = 0;
+unsigned long lastTeleplotDebug = 0;
+const unsigned long TELEPLOT_DEBUG_INTERVAL = 200;
 int dataPoint = 1;
 int sessionNumber = 0;
 uint64_t RTC_UNIX_TIME = 0;
@@ -273,7 +275,9 @@ void sdTask(void* parameter) {
 
 /************************* Setup ***************************/
 
-#define MOCK_FLAG 1
+#define MOCK_FLAG 0
+#define calibrate_RTC 0
+
 void setup() {
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
   Serial.begin(UART0_BAUD);
@@ -301,8 +305,9 @@ void setup() {
 
   // WiFi & WebSocket
   initWiFi(ssid, password, 10);
+  int ntpready; 
   if (WiFi.status() == WL_CONNECTED) {
-    WiFi32_initNTP();
+    ntpready = WiFi32_initNTP();
     BPMobile.setClientName(clientName);
     BPMobile.setRegisterCallback(registerClient);
     BPMobile.initWebSocket(serverHost, serverPort, clientName);
@@ -322,6 +327,9 @@ void setup() {
   if (sdCardReady) SD32_openPersistentFile(csvFilename);
 
   // Time Sync
+  #if calibrate_RTC == 1
+    RTCcalibrate(rtc,(ntpready) ? (WiFi32_getNTPTime()/1000ULL): 1000000000000ULL ,RTCavailable);
+  #endif 
   syncTime_setSyncPoint(RTC_UNIX_TIME, (RTCavailable) ? RTC_getUnix(rtc, RTCavailable) : 1000000000000ULL);
   Serial.print("Time synced: ");
   Serial.println(RTC_getISO(rtc, RTCavailable));
@@ -357,6 +365,14 @@ void loop() {
   }
   if (Time_placeholder > 0) syncTime_setSyncPoint(RTC_UNIX_TIME, Time_placeholder);
   uint64_t CURRENT_UNIX_TIME_MS = syncTime_calcRelative_ms(RTC_UNIX_TIME);
+  
+  #if calibrate_RTC == 1
+    char timeBuf[32];
+    syncTime_formatUnix(timeBuf, CURRENT_UNIX_TIME_MS, 7);  // UTC+7
+    Serial.println(timeBuf);
+    // Serial.println(CURRENT_UNIX_TIME_MS);
+    return;
+  #endif
 
   // Time Sync: Remote source -> DS3231 (60s period)
   if (SESSION_TIME_MS - lastExternalSync >= REMOTE_SYNC_INTERVAL) {
@@ -366,6 +382,14 @@ void loop() {
         RTCcalibrate(rtc, RTC_UNIX_TIME / 1000ULL, RTCavailable);
     }
     lastExternalSync = SESSION_TIME_MS;
+  }
+
+  // Teleplot Debug Output
+  if (SESSION_TIME_MS - lastTeleplotDebug >= TELEPLOT_DEBUG_INTERVAL) {
+    teleplotMechanical(&myMechData);
+    teleplotElectrical(&myElectData);
+    teleplotOdometry(&myOdometryData);
+    lastTeleplotDebug = SESSION_TIME_MS;
   }
 
   // Debug Console

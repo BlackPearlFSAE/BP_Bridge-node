@@ -365,3 +365,12 @@ void mockBAMOCarData(BAMOCar *BamoCar) {
   // Calculated power (V * I)
   BamoCar->power = BamoCar->canVoltage * BamoCar->canCurrent;
 }
+
+// --- TELEPLOT DEBUG FUNCTION ---
+void teleplotBAMOCar(BAMOCar *BamoCar) {
+  Serial.printf(">BAMO_Voltage:%.2f\n", BamoCar->canVoltage);
+  Serial.printf(">BAMO_Current:%.2f\n", BamoCar->canCurrent);
+  Serial.printf(">BAMO_Power:%.2f\n", BamoCar->power);
+  Serial.printf(">BAMO_MotorTemp:%.1f\n", BamoCar->motorTemp2);
+  Serial.printf(">BAMO_CtrlTemp:%.1f\n", BamoCar->controllerTemp);
+}

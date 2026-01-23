@@ -40,3 +40,6 @@ void decodeBAMO_rawmsg(twai_message_t &message);
 void scanBamocarIDs();
 void analyzeBamoData(uint8_t reg, uint8_t* data);
 void mockBAMOCarData(BAMOCar *BamoCar);
+
+// Teleplot debug function
+void teleplotBAMOCar(BAMOCar *BamoCar);

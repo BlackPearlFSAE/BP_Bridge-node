@@ -110,3 +110,17 @@ void mockOdometryData(Odometry *OdomSensors) {
   OdomSensors->imu_gyroy = random(-50, 50) / 10.0;
   OdomSensors->imu_gyroz = random(-50, 50) / 10.0;
 }
+
+// --- TELEPLOT DEBUG FUNCTION ---
+void teleplotOdometry(Odometry *OdomSensors) {
+  Serial.printf(">GPS_Lat:%.6f\n", OdomSensors->gps_lat);
+  Serial.printf(">GPS_Lng:%.6f\n", OdomSensors->gps_lng);
+  Serial.printf(">GPS_Speed:%.2f\n", OdomSensors->gps_speed);
+  Serial.printf(">GPS_Course:%.2f\n", OdomSensors->gps_course);
+  Serial.printf(">IMU_AccelX:%.3f\n", OdomSensors->imu_accelx);
+  Serial.printf(">IMU_AccelY:%.3f\n", OdomSensors->imu_accely);
+  Serial.printf(">IMU_AccelZ:%.3f\n", OdomSensors->imu_accelz);
+  Serial.printf(">IMU_GyroX:%.3f\n", OdomSensors->imu_gyrox);
+  Serial.printf(">IMU_GyroY:%.3f\n", OdomSensors->imu_gyroy);
+  Serial.printf(">IMU_GyroZ:%.3f\n", OdomSensors->imu_gyroz);
+}
