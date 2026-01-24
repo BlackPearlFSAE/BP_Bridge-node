@@ -1,7 +1,7 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <RTClib.h>
-#include "RTClib_helper.h"
+#include "DS3231_util.h"
 
 bool RTCinit(RTC_DS3231 &rtc,TwoWire* WireRTC) {
   if (!rtc.begin(WireRTC)) {

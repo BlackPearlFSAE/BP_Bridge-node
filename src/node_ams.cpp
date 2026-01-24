@@ -27,8 +27,8 @@
 #include "SD32_util.h"
 #include "WIFI32_util.h"
 #include "syncTime_util.h"
-#include "RTClib_helper.h"
-#include "ams_config.h"
+#include "DS3231_util.h"
+#include "ams_data_util.h"
 
 /************************* Pin Definitions ***************************/
 
@@ -226,6 +226,7 @@ void sdTask(void* parameter) {
 
 #define MOCK_DATA 0
 #define calibrate_RTC 0
+#define DEBUG_MODE 2  // 0 = Disabled, 1 = Regular Serial, 2 = Teleplot
 
 void setup() {
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); // Disable brownout detector
@@ -343,12 +344,19 @@ void loop() {
     lastExternalSync = SESSION_TIME_MS;
   }
 
-  // Teleplot Debug Output
+  // Debug Output
+  #if DEBUG_MODE > 0
   if (SESSION_TIME_MS - lastTeleplotDebug >= TELEPLOT_DEBUG_INTERVAL) {
-    // Select for each compile time , don't do loop
-    teleplotBMU(&BMU_Package[0], 0);
+    #if DEBUG_MODE == 1
+      // Regular serial debug
+      debugBMUModule(BMU_Package, 0);
+    #elif DEBUG_MODE == 2
+      // Teleplot format debug
+      teleplotBMU(&BMU_Package[0], 0);
+    #endif
     lastTeleplotDebug = SESSION_TIME_MS;
   }
+  #endif
 
   // Mock data for testing (remove in production)
   #if MOCK_DATA == 1

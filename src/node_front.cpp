@@ -28,10 +28,11 @@
 
 #include <BP_mobile_util.h>
 #include <SD32_util.h>
-#include <RTClib_helper.h>
+#include <DS3231_util.h>
 #include <syncTime_util.h>
 #include <CAN32_util.h>
 #include <WIFI32_util.h>
+
 #include <bamo_helper.h>
 #include <base_sensors.h>
 
@@ -278,6 +279,7 @@ void sdTask(void* parameter) {
 
 #define MOCK_FLAG 0
 #define calibrate_RTC 0
+#define DEBUG_MODE 2  // 0 = Disabled, 1 = Regular Serial, 2 = Teleplot
 
 void setup() {
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
@@ -381,13 +383,23 @@ void loop() {
     lastExternalSync = SESSION_TIME_MS;
   }
 
-  // Teleplot Debug Output
+  // Debug Output
+  #if DEBUG_MODE > 0
   if (SESSION_TIME_MS - lastTeleplotDebug >= TELEPLOT_DEBUG_INTERVAL) {
-    teleplotMechanical(&myMechData);
-    teleplotElectrical(&myElectData);
-    teleplotBAMOCar(&myBAMOCar);
+    #if DEBUG_MODE == 1
+      // Regular serial debug - placeholder for custom debug output
+      Serial.printf("[DEBUG] Mech: RPM_L=%.1f RPM_R=%.1f\n", myMechData.Wheel_RPM_L, myMechData.Wheel_RPM_R);
+      Serial.printf("[DEBUG] Elect: I=%.2fA APPS=%.1f BPPS=%.1f\n", myElectData.I_SENSE, myElectData.APPS, myElectData.BPPS);
+      Serial.printf("[DEBUG] BAMO: V=%.1fV I=%.1fA P=%.1fW\n", myBAMOCar.canVoltage, myBAMOCar.canCurrent, myBAMOCar.power);
+    #elif DEBUG_MODE == 2
+      // Teleplot format debug
+      teleplotMechanical(&myMechData);
+      teleplotElectrical(&myElectData);
+      teleplotBAMOCar(&myBAMOCar);
+    #endif
     lastTeleplotDebug = SESSION_TIME_MS;
   }
+  #endif
 
   twai_message_t txmsg;
   twai_message_t rxmsg;

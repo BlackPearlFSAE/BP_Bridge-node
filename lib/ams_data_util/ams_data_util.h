@@ -33,7 +33,7 @@ struct BMUdata {
   // Basic BMU Data
   uint32_t BMU_ID = 0x00; 
   uint8_t V_CELL[CELL_NUM] = {0};
-  uint8_t TEMP_SENSE[TEMP_SENSOR_NUM] = {0};
+  uint16_t TEMP_SENSE[TEMP_SENSOR_NUM] = {0};
   uint16_t V_MODULE = 0;
   uint8_t DV = 0;
   // FaultCode 10 bit binary representation of C
@@ -48,7 +48,7 @@ struct BMUdata {
   // Status
   uint16_t BalancingDischarge_Cells = 0;
   bool BMUconnected = 0;   // Default as Active true , means each BMU is on the bus
-  bool BMUreadytoCharge = 0;
+  bool BMUneedBalance = 0;
 }; 
 
 // ACCUMULATOR Data , Local to BCU (Make this a struct later , or not? , I don't want over access)
@@ -83,7 +83,17 @@ struct OBCdata {
   bool OBC_OK = 1;
 };
 
-// Teleplot debug functions
-void teleplotBMU(BMUdata *bmu, int moduleNum);
-void teleplotAMS(AMSdata *ams);
+void debugAMSstate(AMSdata *myAMS);
+void debugBMUModule(BMUdata *myBMU,int moduleNum);
+void debugOBCmsg(OBCdata *myOCB);
 
+// Teleplot-compatible debug functions (VSCode Teleplot extension format)
+// Format: >variable_name:value or >variable_name:v1,v2,v3...
+void teleplotAMSstate(AMSdata *myAMS);
+void teleplotBMUModule(BMUdata *myBMU, int moduleNum);
+void teleplotBMUCellVoltages(BMUdata *myBMU, int moduleNum);
+void teleplotBMUTemperatures(BMUdata *myBMU, int moduleNum);
+void teleplotBMUFaults(BMUdata *myBMU, int moduleNum);
+void teleplotOBCmsg(OBCdata *myOBC);
+void teleplotAllModules(BMUdata *BMU_Package, int moduleCount);
+void teleplotLocalCells(float *cellvoltages, int cellCount, const char* prefix);
