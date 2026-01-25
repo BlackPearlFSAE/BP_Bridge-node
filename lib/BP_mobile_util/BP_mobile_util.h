@@ -4,8 +4,8 @@
 #include "freertos/semphr.h"
 
 // Network
-#define DEFAULT_SSID "realme C55"
-#define DEFAULT_PASSWORD "realme1234"
+#define DEFAULT_SSID "Ken"
+#define DEFAULT_PASSWORD "aazz1111"
 #define DEFAULT_SERVER_HOST "10.18.148.68"
 #define DEFAULT_SERVER_PORT 3000
 #define DEFAULT_CLIENT_NAME "ESP32"

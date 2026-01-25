@@ -203,7 +203,8 @@ void BPMobileTask(void* parameter) {
       BPwebSocket->loop();
     }
 
-    if (BPsocketstatus->isRegistered && BPsocketstatus->isConnected) {
+    // if (BPsocketstatus->isRegistered && BPsocketstatus->isConnected) {
+    if (WiFi.status() == WL_CONNECTED) { // Allow running if WiFi is connected, regardless of WebSocket
       if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
         localMech = myMechData;
         localElect = myElectData;
@@ -277,7 +278,7 @@ void sdTask(void* parameter) {
 
 /************************* Setup ***************************/
 
-#define MOCK_FLAG 0
+#define MOCK_FLAG 1
 #define calibrate_RTC 0
 
 void setup() {
@@ -509,10 +510,10 @@ void sendToAPI(const char* topic, float value, uint64_t timestamp) {
     JsonDocument doc;
     doc["timestamp"] = timestamp;
     doc["topic_name"] = topic;
-    doc["experiment_id"] = 1;
-    doc["session_id"] = 1; // Temporary placeholder as requested
+    doc["experiment_id"] = 70;
+    doc["session_id"] = 2; // Temporary placeholder as requested
 
-    doc["data"]["values"]["value"] = value;
+    doc["data"]["value"] = value;
 
     String requestBody;
     serializeJson(doc, requestBody);
@@ -521,11 +522,11 @@ void sendToAPI(const char* topic, float value, uint64_t timestamp) {
     int httpResponseCode = http.POST(requestBody);
     
     // Optional: Debug output
-    // if (httpResponseCode > 0) {
-    //   Serial.printf("[HTTP] %s sent, code: %d\n", topic, httpResponseCode);
-    // } else {
-    //   Serial.printf("[HTTP] Error sending %s: %s\n", topic, http.errorToString(httpResponseCode).c_str());
-    // }
+    if (httpResponseCode > 0) {
+      Serial.printf("[HTTP] %s sent, code: %d\n", topic, httpResponseCode);
+    } else {
+      Serial.printf("[HTTP] Error sending %s: %s\n", topic, http.errorToString(httpResponseCode).c_str());
+    }
 
     http.end();
   }
@@ -543,7 +544,7 @@ void publishBAMOpower(BAMOCar* bamocar) {
     doc["timestamp"] = timestamp;
     String msg;
     serializeJson(doc, msg);
-    BPwebSocket->sendTXT(msg);
+    if (BPsocketstatus->isConnected) BPwebSocket->sendTXT(msg);
     sendToAPI("power/can_voltage", bamocar->canVoltage, timestamp);
   }
 
@@ -556,7 +557,7 @@ void publishBAMOpower(BAMOCar* bamocar) {
     doc["timestamp"] = timestamp;
     String msg;
     serializeJson(doc, msg);
-    BPwebSocket->sendTXT(msg);
+    if (BPsocketstatus->isConnected) BPwebSocket->sendTXT(msg);
     sendToAPI("power/can_current", bamocar->canCurrent, timestamp);
   }
 
@@ -568,7 +569,7 @@ void publishBAMOpower(BAMOCar* bamocar) {
   doc["timestamp"] = timestamp;
   String msg;
   serializeJson(doc, msg);
-  BPwebSocket->sendTXT(msg);
+  if (BPsocketstatus->isConnected) BPwebSocket->sendTXT(msg);
   sendToAPI("power/power", bamocar->power, timestamp);
 }
 
@@ -584,7 +585,7 @@ void publishBAMOtemp(BAMOCar* bamocar) {
     doc["timestamp"] = timestamp;
     String msg;
     serializeJson(doc, msg);
-    BPwebSocket->sendTXT(msg);
+    if (BPsocketstatus->isConnected) BPwebSocket->sendTXT(msg);
     sendToAPI("motor/temperature", bamocar->motorTemp2, timestamp);
   }
 
@@ -597,7 +598,7 @@ void publishBAMOtemp(BAMOCar* bamocar) {
     doc["timestamp"] = timestamp;
     String msg;
     serializeJson(doc, msg);
-    BPwebSocket->sendTXT(msg);
+    if (BPsocketstatus->isConnected) BPwebSocket->sendTXT(msg);
     sendToAPI("motor/controller_temperature", bamocar->controllerTemp, timestamp);
   }
 }
@@ -613,7 +614,7 @@ void publishMechData(Mechanical* MechSensors) {
   docL["timestamp"] = timestamp;
   String msgL;
   serializeJson(docL, msgL);
-  BPwebSocket->sendTXT(msgL);
+  if (BPsocketstatus->isConnected) BPwebSocket->sendTXT(msgL);
   sendToAPI("wheel/left_rpm", MechSensors->Wheel_RPM_L, timestamp);
 
   JsonDocument docR;
@@ -624,7 +625,7 @@ void publishMechData(Mechanical* MechSensors) {
   docR["timestamp"] = timestamp;
   String msgR;
   serializeJson(docR, msgR);
-  BPwebSocket->sendTXT(msgR);
+  if (BPsocketstatus->isConnected) BPwebSocket->sendTXT(msgR);
   sendToAPI("wheel/right_rpm", MechSensors->Wheel_RPM_R, timestamp);
 
   JsonDocument sH;
@@ -635,7 +636,7 @@ void publishMechData(Mechanical* MechSensors) {
   sH["timestamp"] = timestamp;
   String msg2;
   serializeJson(sH, msg2);
-  BPwebSocket->sendTXT(msg2);
+  if (BPsocketstatus->isConnected) BPwebSocket->sendTXT(msg2);
   sendToAPI("sensors/stroke_Heave_distanceMM", MechSensors->STR_Heave_mm, timestamp);
 
   JsonDocument sR;
@@ -646,7 +647,7 @@ void publishMechData(Mechanical* MechSensors) {
   sR["timestamp"] = timestamp;
   String msg1;
   serializeJson(sR, msg1);
-  BPwebSocket->sendTXT(msg1);
+  if (BPsocketstatus->isConnected) BPwebSocket->sendTXT(msg1);
   sendToAPI("sensors/stroke_Roll_distanceMM", MechSensors->STR_Roll_mm, timestamp);
 }
 
@@ -661,7 +662,7 @@ void publishElectData(Electrical* ElectSensors) {
   iSenseDoc["timestamp"] = timestamp;
   String iSenseMsg;
   serializeJson(iSenseDoc, iSenseMsg);
-  BPwebSocket->sendTXT(iSenseMsg);
+  if (BPsocketstatus->isConnected) BPwebSocket->sendTXT(iSenseMsg);
   sendToAPI("electrical/current_sense", ElectSensors->I_SENSE, timestamp);
 
   JsonDocument tmpDoc;
@@ -672,7 +673,7 @@ void publishElectData(Electrical* ElectSensors) {
   tmpDoc["timestamp"] = timestamp;
   String tmpMsg;
   serializeJson(tmpDoc, tmpMsg);
-  BPwebSocket->sendTXT(tmpMsg);
+  if (BPsocketstatus->isConnected) BPwebSocket->sendTXT(tmpMsg);
   sendToAPI("electrical/temperature", ElectSensors->TMP, timestamp);
 
   JsonDocument appsDoc;
@@ -683,7 +684,7 @@ void publishElectData(Electrical* ElectSensors) {
   appsDoc["timestamp"] = timestamp;
   String appsMsg;
   serializeJson(appsDoc, appsMsg);
-  BPwebSocket->sendTXT(appsMsg);
+  if (BPsocketstatus->isConnected) BPwebSocket->sendTXT(appsMsg);
   sendToAPI("electrical/apps", ElectSensors->APPS, timestamp);
 
   JsonDocument bppsDoc;
@@ -694,7 +695,7 @@ void publishElectData(Electrical* ElectSensors) {
   bppsDoc["timestamp"] = timestamp;
   String bppsMsg;
   serializeJson(bppsDoc, bppsMsg);
-  BPwebSocket->sendTXT(bppsMsg);
+  if (BPsocketstatus->isConnected) BPwebSocket->sendTXT(bppsMsg);
   sendToAPI("electrical/bpps", ElectSensors->BPPS, timestamp);
 }
 
@@ -709,7 +710,7 @@ void publishElectFaultState(Electrical* ElectSensors) {
   amsDoc["timestamp"] = timestamp;
   String amsMsg;
   serializeJson(amsDoc, amsMsg);
-  BPwebSocket->sendTXT(amsMsg);
+  if (BPsocketstatus->isConnected) BPwebSocket->sendTXT(amsMsg);
   sendToAPI("electrical/ams_ok", (float)ElectSensors->AMS_OK, timestamp);
 
   JsonDocument imdDoc;
@@ -720,7 +721,7 @@ void publishElectFaultState(Electrical* ElectSensors) {
   imdDoc["timestamp"] = timestamp;
   String imdMsg;
   serializeJson(imdDoc, imdMsg);
-  BPwebSocket->sendTXT(imdMsg);
+  if (BPsocketstatus->isConnected) BPwebSocket->sendTXT(imdMsg);
   sendToAPI("electrical/imd_ok", (float)ElectSensors->IMD_OK, timestamp);
 
   JsonDocument hvDoc;
@@ -731,7 +732,7 @@ void publishElectFaultState(Electrical* ElectSensors) {
   hvDoc["timestamp"] = timestamp;
   String hvMsg;
   serializeJson(hvDoc, hvMsg);
-  BPwebSocket->sendTXT(hvMsg);
+  if (BPsocketstatus->isConnected) BPwebSocket->sendTXT(hvMsg);
   sendToAPI("electrical/hv_on", (float)ElectSensors->HV_ON, timestamp);
 
   JsonDocument bspdDoc;
@@ -742,7 +743,7 @@ void publishElectFaultState(Electrical* ElectSensors) {
   bspdDoc["timestamp"] = timestamp;
   String bspdMsg;
   serializeJson(bspdDoc, bspdMsg);
-  BPwebSocket->sendTXT(bspdMsg);
+  if (BPsocketstatus->isConnected) BPwebSocket->sendTXT(bspdMsg);
   sendToAPI("electrical/bspd_ok", (float)ElectSensors->BSPD_OK, timestamp);
 }
 
