@@ -509,7 +509,7 @@ void sendToAPI(const char* topic, float value, uint64_t timestamp) {
     JsonDocument doc;
     doc["timestamp"] = timestamp;
     doc["topic_name"] = topic;
-    doc["experiment_id"] = 1;
+    doc["experiment_id"] = 20;
     doc["session_id"] = 1; // Temporary placeholder as requested
 
     doc["data"]["value"] = value;
