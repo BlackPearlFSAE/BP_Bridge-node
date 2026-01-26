@@ -512,7 +512,7 @@ void sendToAPI(const char* topic, float value, uint64_t timestamp) {
     doc["experiment_id"] = 1;
     doc["session_id"] = 1; // Temporary placeholder as requested
 
-    doc["data"]["values"] = value;
+    doc["data"]["value"] = value;
 
     String requestBody;
     serializeJson(doc, requestBody);
