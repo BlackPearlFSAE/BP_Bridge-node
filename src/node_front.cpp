@@ -15,6 +15,7 @@
 #include <SPI.h>
 #include <SD.h>
 #include <WiFi.h>
+#include <HTTPClient.h>
 #include <Wire.h>
 #include <driver/twai.h>
 #include <WebSocketsClient.h>
@@ -277,7 +278,7 @@ void sdTask(void* parameter) {
 
 /************************* Setup ***************************/
 
-#define MOCK_FLAG 0
+#define MOCK_FLAG 1
 #define calibrate_RTC 0
 #define DEBUG_MODE 2  // 0 = Disabled, 1 = Regular Serial, 2 = Teleplot
 
@@ -511,6 +512,37 @@ void showDeviceStatus() {
 
 /************************* BPMobile Publishers ***************************/
 
+void sendToAPI(const char* topic, float value, uint64_t timestamp) {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    http.begin("https://mctrl.kmutt.ac.th/ken-api/api/stat/add");
+    http.addHeader("Content-Type", "application/json");
+
+    JsonDocument doc;
+    doc["timestamp"] = timestamp;
+    doc["topic_name"] = topic;
+    doc["experiment_id"] = 20;
+    doc["session_id"] = 1; // Temporary placeholder as requested
+
+    doc["data"]["value"] = value;
+
+    String requestBody;
+    serializeJson(doc, requestBody);
+
+    // Send HTTP POST request
+    int httpResponseCode = http.POST(requestBody);
+    
+    // Optional: Debug output
+    if (httpResponseCode > 0) {
+      Serial.printf("[HTTP] %s sent, code: %d\n", topic, httpResponseCode);
+    } else {
+      Serial.printf("[HTTP] Error sending %s: %s\n", topic, http.errorToString(httpResponseCode).c_str());
+    }
+
+    http.end();
+  }
+}
+
 void publishBAMOpower(BAMOCar* bamocar) {
   uint64_t timestamp = syncTime_calcRelative_ms(RTC_UNIX_TIME);
 
@@ -524,6 +556,7 @@ void publishBAMOpower(BAMOCar* bamocar) {
     String msg;
     serializeJson(doc, msg);
     BPwebSocket->sendTXT(msg);
+    sendToAPI("power/can_voltage", bamocar->canVoltage, timestamp);
   }
 
   if (bamocar->canCurrentValid) {
@@ -536,6 +569,7 @@ void publishBAMOpower(BAMOCar* bamocar) {
     String msg;
     serializeJson(doc, msg);
     BPwebSocket->sendTXT(msg);
+    sendToAPI("power/can_current", bamocar->canCurrent, timestamp);
   }
 
   JsonDocument doc;
@@ -547,6 +581,7 @@ void publishBAMOpower(BAMOCar* bamocar) {
   String msg;
   serializeJson(doc, msg);
   BPwebSocket->sendTXT(msg);
+  sendToAPI("power/power", bamocar->power, timestamp);
 }
 
 void publishBAMOtemp(BAMOCar* bamocar) {
@@ -562,6 +597,7 @@ void publishBAMOtemp(BAMOCar* bamocar) {
     String msg;
     serializeJson(doc, msg);
     BPwebSocket->sendTXT(msg);
+    sendToAPI("motor/temperature", bamocar->motorTemp2, timestamp);
   }
 
   if (bamocar->controllerTempValid) {
@@ -574,6 +610,7 @@ void publishBAMOtemp(BAMOCar* bamocar) {
     String msg;
     serializeJson(doc, msg);
     BPwebSocket->sendTXT(msg);
+    sendToAPI("motor/controller_temperature", bamocar->controllerTemp, timestamp);
   }
 }
 
@@ -589,6 +626,7 @@ void publishMechData(Mechanical* MechSensors) {
   String msgL;
   serializeJson(docL, msgL);
   BPwebSocket->sendTXT(msgL);
+  sendToAPI("wheel/left_rpm", MechSensors->Wheel_RPM_L, timestamp);
 
   JsonDocument docR;
   docR["type"] = "data";
@@ -599,6 +637,7 @@ void publishMechData(Mechanical* MechSensors) {
   String msgR;
   serializeJson(docR, msgR);
   BPwebSocket->sendTXT(msgR);
+  sendToAPI("wheel/right_rpm", MechSensors->Wheel_RPM_R, timestamp);
 
   JsonDocument sH;
   sH["type"] = "data";
@@ -609,6 +648,7 @@ void publishMechData(Mechanical* MechSensors) {
   String msg2;
   serializeJson(sH, msg2);
   BPwebSocket->sendTXT(msg2);
+  sendToAPI("sensors/stroke_Heave_distanceMM", MechSensors->STR_Heave_mm, timestamp);
 
   JsonDocument sR;
   sR["type"] = "data";
@@ -619,6 +659,7 @@ void publishMechData(Mechanical* MechSensors) {
   String msg1;
   serializeJson(sR, msg1);
   BPwebSocket->sendTXT(msg1);
+  sendToAPI("sensors/stroke_Roll_distanceMM", MechSensors->STR_Roll_mm, timestamp);
 }
 
 void publishElectData(Electrical* ElectSensors) {
@@ -633,6 +674,7 @@ void publishElectData(Electrical* ElectSensors) {
   String iSenseMsg;
   serializeJson(iSenseDoc, iSenseMsg);
   BPwebSocket->sendTXT(iSenseMsg);
+  sendToAPI("electrical/current_sense", ElectSensors->I_SENSE, timestamp);
 
   JsonDocument tmpDoc;
   tmpDoc["type"] = "data";
@@ -643,6 +685,7 @@ void publishElectData(Electrical* ElectSensors) {
   String tmpMsg;
   serializeJson(tmpDoc, tmpMsg);
   BPwebSocket->sendTXT(tmpMsg);
+  sendToAPI("electrical/temperature", ElectSensors->TMP, timestamp);
 
   JsonDocument appsDoc;
   appsDoc["type"] = "data";
@@ -653,6 +696,7 @@ void publishElectData(Electrical* ElectSensors) {
   String appsMsg;
   serializeJson(appsDoc, appsMsg);
   BPwebSocket->sendTXT(appsMsg);
+  sendToAPI("electrical/apps", ElectSensors->APPS, timestamp);
 
   JsonDocument bppsDoc;
   bppsDoc["type"] = "data";
@@ -663,6 +707,7 @@ void publishElectData(Electrical* ElectSensors) {
   String bppsMsg;
   serializeJson(bppsDoc, bppsMsg);
   BPwebSocket->sendTXT(bppsMsg);
+  sendToAPI("electrical/bpps", ElectSensors->BPPS, timestamp);
 }
 
 void publishElectFaultState(Electrical* ElectSensors) {
@@ -677,6 +722,7 @@ void publishElectFaultState(Electrical* ElectSensors) {
   String amsMsg;
   serializeJson(amsDoc, amsMsg);
   BPwebSocket->sendTXT(amsMsg);
+  sendToAPI("electrical/ams_ok", (float)ElectSensors->AMS_OK, timestamp);
 
   JsonDocument imdDoc;
   imdDoc["type"] = "data";
@@ -687,6 +733,7 @@ void publishElectFaultState(Electrical* ElectSensors) {
   String imdMsg;
   serializeJson(imdDoc, imdMsg);
   BPwebSocket->sendTXT(imdMsg);
+  sendToAPI("electrical/imd_ok", (float)ElectSensors->IMD_OK, timestamp);
 
   JsonDocument hvDoc;
   hvDoc["type"] = "data";
@@ -697,6 +744,7 @@ void publishElectFaultState(Electrical* ElectSensors) {
   String hvMsg;
   serializeJson(hvDoc, hvMsg);
   BPwebSocket->sendTXT(hvMsg);
+  sendToAPI("electrical/hv_on", (float)ElectSensors->HV_ON, timestamp);
 
   JsonDocument bspdDoc;
   bspdDoc["type"] = "data";
@@ -707,6 +755,7 @@ void publishElectFaultState(Electrical* ElectSensors) {
   String bspdMsg;
   serializeJson(bspdDoc, bspdMsg);
   BPwebSocket->sendTXT(bspdMsg);
+  sendToAPI("electrical/bspd_ok", (float)ElectSensors->BSPD_OK, timestamp);
 }
 
 void registerClient(const char* clientName) {
