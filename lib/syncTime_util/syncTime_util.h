@@ -2,6 +2,10 @@
 #define SYNCTIME_UTIL_V2_H
 
 #include <cstdint>
+
+#define DEFAULT_LOCAL_SYNC_INTERVAL 1000
+#define DEFAULT_REMOTE_SYNC_INTERVAL 60000
+
 /**
  * CORE CONCEPT:
  * - localTime_ms: Unix timestamp from ANY source (RTC/NTP/Server)

@@ -23,48 +23,39 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 
+#include <driver/twai.h>
+
 #include "BP_mobile_util.h"
 #include "SD32_util.h"
 #include "WIFI32_util.h"
 #include "syncTime_util.h"
 #include "DS3231_util.h"
+#include "CAN32_util.h"
 #include "ams_data_util.h"
+#include "shared_config.h"
 
 /************************* Pin Definitions ***************************/
 
-// Network
-const char* ssid = "realme C55";
-const char* password = "realme1234";
-const char* serverHost = "10.18.211.132";
-const int serverPort = 3000;
+// WebSocket and Network config
+const char* ssid = DEFAULT_SSID;
+const char* password = DEFAULT_PASSWORD;
+const char* serverHost = DEFAULT_SERVER_HOST;
+const int serverPort = DEFAULT_SERVER_PORT;
 const char* clientName = "AMS_Node";
 
 WebSocketsClient webSockets;
 socketstatus webSocketStatus;
+
 BPMobileConfig BPMobile(&webSockets, &webSocketStatus);
 WebSocketsClient* BPwebSocket = BPMobile.webSocket;
 socketstatus* BPsocketstatus = BPMobile.webSocketstatus;
 
 // Sampling Rates (Hz)
-const float BMU_CELLS_SAMPLING_RATE = (DEFAULT_PUBLISH_RATE/5);
-const float BMU_FAULT_SAMPLING_RATE = (DEFAULT_PUBLISH_RATE/5);
+const float BMU_CELLS_SAMPLING_RATE = DEFAULT_PUBLISH_RATE;
+const float BMU_FAULT_SAMPLING_RATE = DEFAULT_PUBLISH_RATE;
 
-// LEDs
-#define WIFI_LED 3
-#define WS_LED 4
-
-// I2C
-#define I2C1_SDA 18
-#define I2C1_SCL 17
-
-// SD SPI
-#define SD_CS_PIN 10
-#define SD_MOSI_PIN 11
-#define SD_MISO_PIN 13
-#define SD_SCK_PIN 12
-
-// UART
-#define UART0_BAUD 115200
+// AMS CAN Timing
+#define BMS_RX_INTERVAL 10  // Poll CAN RX every 10ms
 
 /************************* Global Variables ***************************/
 
@@ -73,16 +64,17 @@ RTC_DS3231 rtc;
 bool I2C1_connect = false;
 bool RTCavailable = false;
 bool sdCardReady = false;
+bool canBusReady = false;
 
 // Timing Intervals (ms)
-const unsigned long LOCAL_SYNC_INTERVAL = 1000;
-const unsigned long REMOTE_SYNC_INTERVAL = 60000;
-const unsigned long SD_APPEND_INTERVAL = DEFAULT_SD_LOG_INTERVAL;
-const unsigned long SD_FLUSH_INTERVAL = 1000;
-const unsigned long SD_CLOSE_INTERVAL = 10000;
+const unsigned long LOCAL_SYNC_INTERVAL = DEFAULT_LOCAL_SYNC_INTERVAL;
+const unsigned long REMOTE_SYNC_INTERVAL = DEFAULT_REMOTE_SYNC_INTERVAL;
 
-unsigned long lastTimeSourceSync = 0;
-unsigned long lastExternalSync = 0;
+const unsigned long SD_APPEND_INTERVAL = DEFAULT_SD_LOG_INTERVAL;
+const unsigned long SD_FLUSH_INTERVAL = DEFAULT_SD_FLUSH_INTERVAL;
+const unsigned long SD_CLOSE_INTERVAL = DEFAULT_SD_CLOSE_INTERVAL;
+const int SD_MAX_ROWS = DEFAULT_SD_ROW_LIMIT;
+
 uint64_t RTC_UNIX_TIME = 0;
 unsigned long lastSDLog = 0;
 unsigned long lastTeleplotDebug = 0;
@@ -91,8 +83,10 @@ int dataPoint = 1;
 int sessionNumber = 0;
 
 // SD Card
-char sessionDirPath[32] = {0};
-char bmuFilePaths[MODULE_NUM][48] = {0};
+char sessionDirPath[48] = {0};
+char partDirPath[64] = {0};
+int partIndex = 0;
+char bmuFilePaths[MODULE_NUM][80] = {0};
 
 // CSV Headers
 const char* header_BMU = "DataPoint,UnixTime,SessionTime,V_MODULE,TEMP1,TEMP2,DV,"
@@ -112,16 +106,26 @@ void registerClient(const char* clientName);
 
 // File Management
 void mockBMUData();
+void showDeviceStatus();
 void append_BMU_toCSVFile(File& dataFile, BMUdata* bmu, int dp, uint64_t Timestamp, uint64_t session);
+void createPartitionDir();
 void openAllFiles();
 void closeAllFiles();
 void flushAllFiles();
+
+/************************* Build Flags ***************************/
+
+#define MOCK_DATA 0
+#define calibrate_RTC 0
+#define DEBUG_MODE 0  // 0 = Disabled, 1 = Regular Serial, 2 = Teleplot
 
 /************************* FreeRTOS ***************************/
 
 SemaphoreHandle_t dataMutex = NULL;
 SemaphoreHandle_t serialMutex = NULL;  // For cross-core Serial prints
 TaskHandle_t BPMobileTaskHandle = NULL;
+TaskHandle_t timeSyncTaskHandle = NULL;
+TaskHandle_t canTaskHandle = NULL;
 TaskHandle_t sdTaskHandle = NULL;
 QueueHandle_t sdQueue = NULL;
 
@@ -147,7 +151,7 @@ void BPMobileTask(void* parameter) {
   BMUdata localBMU[MODULE_NUM];
 
   while (true) {
-    unsigned long now = millis();
+    unsigned long SESSION_TIME = millis();
 
     // Handle WebSocket communication
     if (WiFi.status() == WL_CONNECTED) {
@@ -167,19 +171,19 @@ void BPMobileTask(void* parameter) {
       }
 
       // Publish BMU cell voltages
-      if (now - taskLastBMUcells >= (unsigned long)(1000.0 / BMU_CELLS_SAMPLING_RATE)) {
+      if (SESSION_TIME - taskLastBMUcells >= (unsigned long)(1000.0 / BMU_CELLS_SAMPLING_RATE)) {
         for (int i = 0; i < MODULE_NUM; i++) {
           publishBMUcells(&localBMU[i], i);
         }
-        taskLastBMUcells = now;
+        taskLastBMUcells = SESSION_TIME;
       }
 
       // Publish BMU faults
-      if (now - taskLastBMUfaults >= (unsigned long)(1000.0 / BMU_FAULT_SAMPLING_RATE)) {
+      if (SESSION_TIME - taskLastBMUfaults >= (unsigned long)(1000.0 / BMU_FAULT_SAMPLING_RATE)) {
         for (int i = 0; i < MODULE_NUM; i++) {
           publishBMUfaults(&localBMU[i], i);
         }
-        taskLastBMUfaults = now;
+        taskLastBMUfaults = SESSION_TIME;
       }
     }
 
@@ -189,29 +193,44 @@ void BPMobileTask(void* parameter) {
 }
 
 // Core 1: SD Card Logger Task
+// Consumes SDLogEntry from queue, writes to MODULE_NUM persistent BMU CSV files.
+// AMS uses two-level dirs: /AMS_session_000/AMS_p0/bmu_0.csv ... bmu_7.csv
+// File rotation: after SD_MAX_ROWS rows, closes all BMU files, creates next
+// partition subdir (AMS_p1/, AMS_p2/, ...) with fresh files in the same session.
+// Session dir only renews on reboot.
 void sdTask(void* parameter) {
   SDLogEntry entry;
   unsigned long lastFlushTime = 0;
   int localDataPoint = 0;
 
   while (true) {
-    // Wait for data from queue
+    // Block until loop() enqueues a log entry
     if (xQueueReceive(sdQueue, &entry, portMAX_DELAY) == pdTRUE) {
       if (!sdCardReady || !filesOpen) {
         continue;
       }
 
-      unsigned long now = millis();
-      // Write to all BMU files (every entry = 200ms)
+      // Row-based rotation: close all BMU files, create next partition subdir
+      if (localDataPoint > 0 && localDataPoint % SD_MAX_ROWS == 0) {
+        closeAllFiles();
+        partIndex++;
+        createPartitionDir();  // creates AMS_pN/ dir, CSV files, and opens them
+        Serial.printf("[SD] Row limit reached, rotated to partition: %s\n", partDirPath);
+      }
+
+      unsigned long SESSION_TIME = millis();
+
+      // Write one row to each BMU file (one file per battery module)
       for (int i = 0; i < MODULE_NUM; i++) {
         if (bmuFiles[i]) {
           append_BMU_toCSVFile(bmuFiles[i], &entry.bmu[i], entry.dataPoint, entry.unixTime, entry.sessionTime);
         }
       }
-      // Flush periodically
-      if (now - lastFlushTime >= SD_FLUSH_INTERVAL) {
+
+      // Flush all BMU files periodically to prevent data loss on power cut
+      if (SESSION_TIME - lastFlushTime >= SD_FLUSH_INTERVAL) {
         flushAllFiles();
-        lastFlushTime = now;
+        lastFlushTime = SESSION_TIME;
       }
 
       localDataPoint++;
@@ -222,11 +241,59 @@ void sdTask(void* parameter) {
   }
 }
 
-/************************* Setup ***************************/
+// Core 0: Time Synchronization Task
+void timeSyncTask(void* parameter) {
+  unsigned long lastLocalSync = 0;
+  unsigned long lastRemoteSync = 0;
 
-#define MOCK_DATA 0
-#define calibrate_RTC 0
-#define DEBUG_MODE 2  // 0 = Disabled, 1 = Regular Serial, 2 = Teleplot
+  while (true) {
+    unsigned long SESSION_TIME = millis();
+
+    // Local RTC poll every 1s
+    if (SESSION_TIME - lastLocalSync >= LOCAL_SYNC_INTERVAL) {
+      uint64_t t = (uint64_t)RTC_getUnix(rtc, RTCavailable) * 1000ULL;
+      if (t > 0) syncTime_setSyncPoint(RTC_UNIX_TIME, t);
+      lastLocalSync = SESSION_TIME;
+    }
+
+    // Remote NTP recalibration every 60s
+    if (SESSION_TIME - lastRemoteSync >= REMOTE_SYNC_INTERVAL) {
+      uint64_t externalTime = WiFi32_getNTPTime();
+      if (externalTime > 0 && RTCavailable) {
+        if (syncTime_ifDrifted(RTC_UNIX_TIME, externalTime, 1000))
+          RTCcalibrate(rtc, RTC_UNIX_TIME / 1000ULL, RTCavailable);
+      }
+      lastRemoteSync = SESSION_TIME;
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(100));
+  }
+}
+
+// Core 1: CAN Bus Task (BMU communication - placeholder for AMS Master logic)
+void canTask(void* parameter) {
+  TickType_t xLastWakeTime = xTaskGetTickCount();
+  twai_message_t rxmsg;
+
+  while (true) {
+    if (!canBusReady) { vTaskDelay(pdMS_TO_TICKS(100)); continue; }
+
+    // RX poll: receive BMU data frames
+    if (CAN32_receiveCAN(&rxmsg) == ESP_OK) {
+      // TODO: Implement BMU message parsing (AMS Master logic)
+      // Expected: parse rxmsg based on BMU CAN IDs (BCU_ADD range)
+      // and populate BMU_Package[] under dataMutex
+      if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+        // process_BMU_CANmsg(&rxmsg, BMU_Package, MODULE_NUM);
+        xSemaphoreGive(dataMutex);
+      }
+    }
+
+    vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(BMS_RX_INTERVAL));
+  }
+}
+
+/************************* Setup ***************************/
 
 void setup() {
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); // Disable brownout detector
@@ -244,8 +311,11 @@ void setup() {
   // RTC Init
   RTCavailable = RTCinit(rtc,&Wire1);
 
+  // CAN Bus Init
+  canBusReady = CAN32_initCANBus(CAN_TX_PIN, CAN_RX_PIN,
+    TWAI_TIMING_CONFIG_250KBITS(), TWAI_FILTER_CONFIG_ACCEPT_ALL());
+
   // Connect to WiFi and Websocket
-  initWiFi(ssid, password, 10);
   initWiFi(ssid, password, 10);
   int ntpready; 
   if (WiFi.status() == WL_CONNECTED) {
@@ -258,56 +328,46 @@ void setup() {
   // SD Card Init
   SD32_initSDCard(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN, sdCardReady);
   if (sdCardReady) {
-    // Create session directory
-    SD32_createSessionDir(sessionNumber, sessionDirPath);
-
-    // Generate file paths for each BMU
-    for (int i = 0; i < MODULE_NUM; i++) {
-      SD32_generateFilenameInDir(bmuFilePaths[i], sessionDirPath, "bmu", i);
-      Serial.printf("  BMU %d file: %s\n", i, bmuFilePaths[i]);
-    }
-
-    // Create CSV files with headers
-    for (int i = 0; i < MODULE_NUM; i++) 
-    SD32_createCSVFile(bmuFilePaths[i], header_BMU);
-    
-    // Open all files for persistent logging
-    openAllFiles();
+    SD32_createSessionDir(sessionNumber, sessionDirPath, "AMS");
+    createPartitionDir();
   }
 
   #if calibrate_RTC == 1
     RTCcalibrate(rtc,(ntpready) ? (WiFi32_getNTPTime()/1000ULL): 1000000000000ULL ,RTCavailable);
   #endif
   syncTime_setSyncPoint(RTC_UNIX_TIME, RTCavailable ? RTC_getUnix(rtc,RTCavailable) : 1000000000000ULL);
-  Serial.print("Time synced: ");
-  Serial.println(RTC_getISO(rtc,RTCavailable));
 
-  // Create mutex for shared sensor data
+  // FreeRTOS Setup
   dataMutex = xSemaphoreCreateMutex();
   if (dataMutex == NULL) Serial.println("[ERROR] Failed to create dataMutex!");
-  
-  // Create mutex for Serial prints (prevents garbled output across cores)
   serialMutex = xSemaphoreCreateMutex();
   if (serialMutex == NULL) Serial.println("[ERROR] Failed to create serialMutex!");
-  
-  // Create SD queue (hold up to 30 entries)
   sdQueue = xQueueCreate(30, sizeof(SDLogEntry));
   if (sdQueue == NULL) Serial.println("[ERROR] Failed to create SD queue!");
 
-  // Create BPMobile task on Core 0
-  xTaskCreatePinnedToCore(BPMobileTask,"BPMobileTask",8192,NULL,1,
-    &BPMobileTaskHandle,0);
-  Serial.println("[FreeRTOS] BPMobile task started on Core 0");
+  // Core 0 tasks
+  xTaskCreatePinnedToCore(BPMobileTask, "BPMobileTask", 8192, NULL, 1, &BPMobileTaskHandle, 0);
+  Serial.println("[RTOS] BPMobile task on Core 0 (pri 1)");
 
-  // Create SD task on Core 1
-  xTaskCreatePinnedToCore(sdTask,"SDTask",8192,NULL,1,&sdTaskHandle,1);
-  Serial.println("[FreeRTOS] SD Logger task started on Core 1");
+  xTaskCreatePinnedToCore(timeSyncTask, "TimeSyncTask", 4096, NULL, 3, &timeSyncTaskHandle, 0);
+  Serial.println("[RTOS] TimeSync task on Core 0 (pri 3)");
 
-  Serial.println("==================================================");
-  Serial.println("       BMS Data Logger - Ready");
-  Serial.printf("       Session: %d | BMU Count: %d\n", sessionNumber, MODULE_NUM);
-  Serial.printf("       Client: %s\n", clientName);
-  Serial.println("==================================================");
+  // Core 1 tasks
+  #if MOCK_DATA == 0
+    xTaskCreatePinnedToCore(canTask, "CANTask", 4096, NULL, 5, &canTaskHandle, 1);
+    Serial.println("[RTOS] CAN task on Core 1 (pri 5)");
+  #else
+    Serial.println("[RTOS] CAN task SKIPPED (MOCK_DATA=1)");
+  #endif
+
+  xTaskCreatePinnedToCore(sdTask, "SDTask", 8192, NULL, 2, &sdTaskHandle, 1);
+  Serial.println("[RTOS] SD Logger task on Core 1 (pri 2)");
+
+  Serial.println( "==================================================");
+  Serial.println( "       BMS Data Logger - Ready");
+  Serial.printf(  "       Session: %d | BMU Count: %d\n", sessionNumber, MODULE_NUM);
+  Serial.printf(  "       Client: %s\n", clientName);
+  Serial.println( "==================================================");
 }
 
 /************************* Main Loop ***************************/
@@ -315,43 +375,22 @@ void setup() {
 void loop() {
 
   uint64_t SESSION_TIME_MS = millis();
-  // Time Sync: fetch RTC DS3231 every 1s 
-  uint64_t Time_placeholder = 0;
-  if (SESSION_TIME_MS - lastTimeSourceSync >= LOCAL_SYNC_INTERVAL) {
-    Time_placeholder = (uint64_t)RTC_getUnix(rtc,RTCavailable)*1000ULL;
-    lastTimeSourceSync = SESSION_TIME_MS;
-  }
-  // Set syncpoint , and calculate UnixTime_ms + ElapseTime_ms 
-  if (Time_placeholder > 0) syncTime_setSyncPoint(RTC_UNIX_TIME, Time_placeholder);
   uint64_t CURRENT_UNIX_TIME_MS = syncTime_calcRelative_ms(RTC_UNIX_TIME);
+
   #if calibrate_RTC == 1
     char timeBuf[32];
     syncTime_formatUnix(timeBuf, CURRENT_UNIX_TIME_MS, 7);  // UTC+7
     Serial.println(timeBuf);
-    // Serial.println(CURRENT_UNIX_TIME_MS);
+    vTaskDelay(pdMS_TO_TICKS(1000));
     return;
   #endif
-
-  // Time Sync: Remote source -> DS3231 (60s period)
-  if (SESSION_TIME_MS - lastExternalSync >= REMOTE_SYNC_INTERVAL) {
-    uint64_t externalTime = WiFi32_getNTPTime();              // NTP
-    // uint64_t externalTime = BPMobile_getLastServerTime();  // Server
-
-    if (externalTime > 0 && RTCavailable) {
-      if(syncTime_ifDrifted(RTC_UNIX_TIME, externalTime,1000))
-        RTCcalibrate(rtc,RTC_UNIX_TIME/1000ULL,RTCavailable);
-    }
-    lastExternalSync = SESSION_TIME_MS;
-  }
 
   // Debug Output
   #if DEBUG_MODE > 0
   if (SESSION_TIME_MS - lastTeleplotDebug >= TELEPLOT_DEBUG_INTERVAL) {
     #if DEBUG_MODE == 1
-      // Regular serial debug
       debugBMUModule(BMU_Package, 0);
     #elif DEBUG_MODE == 2
-      // Teleplot format debug
       teleplotBMU(&BMU_Package[0], 0);
     #endif
     lastTeleplotDebug = SESSION_TIME_MS;
@@ -360,8 +399,9 @@ void loop() {
 
   // Mock data for testing (remove in production)
   #if MOCK_DATA == 1
-    for (int i = 0; i < MODULE_NUM; i++) {
-      mockBMUData(i);
+    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+      mockBMUData();
+      xSemaphoreGive(dataMutex);
     }
   #endif
 
@@ -379,13 +419,11 @@ void loop() {
     entry.unixTime = CURRENT_UNIX_TIME_MS;
     entry.sessionTime = SESSION_TIME_MS;
 
-    // Copy sensor data with mutex
     if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
       memcpy(entry.bmu, BMU_Package, sizeof(BMU_Package));
       xSemaphoreGive(dataMutex);
     }
 
-    // Non-blocking queue send
     if (xQueueSend(sdQueue, &entry, 0) == pdTRUE) {
       dataPoint++;
     } else {
@@ -395,11 +433,26 @@ void loop() {
     lastSDLog = SESSION_TIME_MS;
   }
 
-  // Small delay to prevent watchdog issues
-  delay(10);
+  vTaskDelay(pdMS_TO_TICKS(20));
 }
 
 /************************* File Management ***************************/
+
+// Creates partition subdir inside session dir, generates BMU CSV files, and opens them.
+// Called on boot and on every row-based rotation (every SD_MAX_ROWS entries).
+// Result: /AMS_session_000/AMS_p0/bmu_0.csv ... bmu_7.csv
+void createPartitionDir() {
+  snprintf(partDirPath, sizeof(partDirPath), "%s/AMS_p%d", sessionDirPath, partIndex);
+  SD.mkdir(partDirPath);
+  Serial.printf("[SD] Created partition directory: %s\n", partDirPath);
+
+  for (int i = 0; i < MODULE_NUM; i++) {
+    SD32_generateFilenameInDir(bmuFilePaths[i], partDirPath, "bmu", i);
+    SD32_createCSVFile(bmuFilePaths[i], header_BMU);
+    Serial.printf("  BMU %d file: %s\n", i, bmuFilePaths[i]);
+  }
+  openAllFiles();
+}
 
 void openAllFiles() {
   for (int i = 0; i < MODULE_NUM; i++) {
@@ -464,7 +517,7 @@ void append_BMU_toCSVFile(File& dataFile, BMUdata* bmu, int dp, uint64_t Timesta
   // Status (balancing as hex bitmask)
   dataFile.print(bmu->BalancingDischarge_Cells, HEX); dataFile.print(",");
   dataFile.print(bmu->BMUconnected); dataFile.print(",");
-  dataFile.println(bmu->BMUreadytoCharge);
+  dataFile.print(bmu->BMUneedBalance);
 }
 
 /************************* BPMobile Publishers ***************************/
@@ -570,8 +623,8 @@ void publishBMUfaults(BMUdata* bmu, int moduleNum) {
   data["ot_crit"] = bmu->OVERTEMP_CRITICAL;
   data["odv_warn"] = bmu->OVERDIV_VOLTAGE_WARNING;
   data["odv_crit"] = bmu->OVERDIV_VOLTAGE_CRITICAL;
-  data["balancing"] = bmu->BalancingDischarge_Cells;
-  data["ready_charge"] = bmu->BMUreadytoCharge;
+  data["BalancingCells"] = bmu->BalancingDischarge_Cells;
+  data["NeedBalancing"] = bmu->BMUneedBalance;
 
   doc["timestamp"] = timestamp;
 
@@ -585,7 +638,7 @@ void mockBMUData() {
     for (int i = 0; i < MODULE_NUM / 2; i++) {
         BMU_Package[i].BMU_ID = 0x18200001 + (i << 16);
         BMU_Package[i].BMUconnected = true;
-        BMU_Package[i].BMUreadytoCharge = 1;
+        BMU_Package[i].BMUneedBalance = 1;
         BMU_Package[i].DV = 5;
         BMU_Package[i].TEMP_SENSE[0] = 0xC8;
         BMU_Package[i].TEMP_SENSE[1] = 0xC8;
@@ -609,7 +662,7 @@ void mockBMUData() {
     for (int i = MODULE_NUM / 2; i < MODULE_NUM; i++) {
         BMU_Package[i].BMU_ID = 0x18200001 + (i << 16);
         BMU_Package[i].BMUconnected = true;
-        BMU_Package[i].BMUreadytoCharge = 0;
+        BMU_Package[i].BMUneedBalance = 0;
         BMU_Package[i].DV = 15;
         BMU_Package[i].TEMP_SENSE[0] = 0xFA;
         BMU_Package[i].TEMP_SENSE[1] = 0xD0;
@@ -645,4 +698,21 @@ void teleplotBMU(BMUdata *bmu, int moduleNum) {
   Serial.printf(">BMU%d_TEMP2:%.1f\n", moduleNum, (bmu->TEMP_SENSE[1] * 0.5f) - 40.0f);
   Serial.printf(">BMU%d_DV:%.2f\n", moduleNum, bmu->DV * 0.1f);
   Serial.printf(">BMU%d_Connected:%d\n", moduleNum, bmu->BMUconnected ? 1 : 0);
+}
+
+void showDeviceStatus() {
+  Serial.println("╔═════════════════════════════════════════════╗");
+  Serial.println("║         REAR NODE - SYSTEM STATUS           ║");
+  Serial.println("╠═════════════════════════════════════════════╣");
+  Serial.printf("║ I2C1:         %s\n", I2C1_connect ? "OK" : "FAIL");
+  // Serial.printf("║ I2C2:         %s\n", I2C2_connect ? "OK" : "FAIL");
+  Serial.printf("║ SD Card:      %s\n", sdCardReady ? "OK" : "FAIL");
+  Serial.printf("║ WiFi:         %s (RSSI: %d)\n", WiFi.status() == WL_CONNECTED ? "OK" : "FAIL", WiFi.RSSI());
+  Serial.printf("║ RTC:          %s\n", RTCavailable ? "OK" : "FAIL");
+  Serial.printf("║ WebSocket:    %s\n", BPsocketstatus->isConnected ? "OK" : "FAIL");
+  Serial.printf("║ Time Sync:    %s\n", syncTime_isSynced() ? "OK" : "FAIL");
+  // Serial.println("╠═════════════════════════════════════════════╣");
+  // Serial.printf("║ IMU:          %s\n", IMUavailable ? "OK" : "FAIL");
+  // Serial.printf("║ GPS:          %s\n", gpsSerial.available() > 0 ? "OK" : "FAIL");
+  Serial.println("╚═════════════════════════════════════════════╝");
 }

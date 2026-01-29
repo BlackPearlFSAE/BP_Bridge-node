@@ -19,7 +19,6 @@
 // void setRegisterCallback(RegisterTopicFn cb) { registerClientTopics_fn = cb; }
 // void setTimeProvider(TimeProviderFn fn) {serverSyncTime_fn = fn; }
 
-
 // User calls these in their Arduino Sketch
 void BPMobileConfig::setRegisterCallback(RegisterTopicFn callback) { _registration_cb = callback; }
 void BPMobileConfig::setTimeProvider(TimeProviderFn callback) { _timesourceProvider_fn = callback;}
@@ -238,51 +237,4 @@ BPMobileConfig::~BPMobileConfig()
     delete this->webSocketstatus;
     this->webSocketstatus = nullptr;
   }
-}
-
-// ============================================================================
-// SERVER TIME SYNC IMPLEMENTATION (Standalone functions)
-// ============================================================================
-
-static uint64_t _lastServerTime = 0;
-
-void BPMobile_requestServerTime(WebSocketsClient* ws) {
-  if (ws == nullptr) return;
-
-  // Send time request to server
-  ws->sendTXT("{\"type\":\"time_request\"}");
-  if (serialMutex && xSemaphoreTake(serialMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-    Serial.println("[BPMobile] Requested server time");
-    xSemaphoreGive(serialMutex);
-  }
-}
-
-uint64_t BPMobile_parseServerTime(const char* payload) {
-  // Simple parsing - look for "server_time" field
-  // Expected format: {"type": "time_response", "server_time": 1736000000000}
-
-  const char* timeKey = "\"server_time\":";
-  const char* pos = strstr(payload, timeKey);
-  if (pos == nullptr) return 0;
-
-  pos += strlen(timeKey);
-  // Skip whitespace
-  while (*pos == ' ' || *pos == '\t') pos++;
-
-  // Parse number
-  uint64_t serverTime = strtoull(pos, nullptr, 10);
-
-  if (serverTime > 1000000000000ULL) {  // Valid timestamp (after year 2001)
-    _lastServerTime = serverTime;
-    if (serialMutex && xSemaphoreTake(serialMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-      Serial.printf("[BPMobile] Received server time: %llu\n", serverTime);
-      xSemaphoreGive(serialMutex);
-    }
-  }
-
-  return serverTime;
-}
-
-uint64_t BPMobile_getLastServerTime() {
-  return _lastServerTime;
 }

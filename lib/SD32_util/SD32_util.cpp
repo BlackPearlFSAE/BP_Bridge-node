@@ -10,6 +10,7 @@
 static File _persistentFile;
 static bool _persistentFileOpen = false;
 static unsigned long _lastFlushTime = 0;
+static unsigned long _lastCloseTime = 0;
 
 // ============================================================================
 // SD CARD INITIALIZATION
@@ -54,12 +55,8 @@ void SD32_getSDsize() {
 }
 
 // ============================================================================
-// SESSION & FILENAME MANAGEMENT
+// SESSION DIRECTORY MANAGEMENT
 // ============================================================================
-
-void SD32_generateUniqueFilename(int &sessionNumber, char* csvFilename) {
-  SD32_generateUniqueFilename(sessionNumber, csvFilename, "datalog");
-}
 
 void SD32_generateUniqueFilename(int &sessionNumber, char* csvFilename, const char* prefix) {
   sessionNumber = 0;
@@ -96,12 +93,13 @@ void SD32_generateUniqueFilename(int &sessionNumber, char* csvFilename, const ch
   Serial.println(csvFilename);
 }
 
-// ============================================================================
-// SESSION DIRECTORY MANAGEMENT
-// ============================================================================
-
-void SD32_createSessionDir(int &sessionNumber, char* sessionDirPath) {
+void SD32_createSessionDir(int &sessionNumber, char* sessionDirPath, const char* prefix) {
   sessionNumber = 0;
+
+  // Build search pattern: "{prefix}_session_"
+  char searchPattern[32];
+  snprintf(searchPattern, sizeof(searchPattern), "%s_session_", prefix);
+  int patternLen = strlen(searchPattern);
 
   // Find next available session number
   File root = SD.open("/");
@@ -110,8 +108,8 @@ void SD32_createSessionDir(int &sessionNumber, char* sessionDirPath) {
     while (entry) {
       if (entry.isDirectory()) {
         String dirname = entry.name();
-        if (dirname.startsWith("session_")) {
-          int num = dirname.substring(8).toInt();
+        if (dirname.startsWith(searchPattern)) {
+          int num = dirname.substring(patternLen).toInt();
           if (num >= sessionNumber) {
             sessionNumber = num + 1;
           }
@@ -124,7 +122,7 @@ void SD32_createSessionDir(int &sessionNumber, char* sessionDirPath) {
   }
 
   // Create session directory
-  snprintf(sessionDirPath, 32, "/session_%03d", sessionNumber);
+  snprintf(sessionDirPath, 48, "/%s_session_%03d", prefix, sessionNumber);
   if (!SD.exists(sessionDirPath)) {
     SD.mkdir(sessionDirPath);
     Serial.printf("[SD] Created session directory: %s\n", sessionDirPath);
@@ -140,7 +138,7 @@ void SD32_generateFilenameInDir(char* filepath, const char* dirPath, const char*
 }
 
 // ============================================================================
-// CSV FILE CREATION
+// NON-PERSISTENT APPEND (opens/closes file each call)
 // ============================================================================
 
 void SD32_createCSVFile(char* csvFilename, const char* csvHeader) {
@@ -154,10 +152,6 @@ void SD32_createCSVFile(char* csvFilename, const char* csvHeader) {
     Serial.println("[SD] ERROR: Could not create CSV file!");
   }
 }
-
-// ============================================================================
-// NON-PERSISTENT APPEND (opens/closes file each call)
-// ============================================================================
 
 void SD32_appendBulkDataToCSV(const char* filepath, AppenderFunc* appenders, void** dataArray, size_t count) {
   File file = SD.open(filepath, FILE_APPEND);
@@ -225,7 +219,7 @@ size_t SD32_getPersistentFileSize() {
   return 0;
 }
 
-void SD32_appendBulkDataPersistent(AppenderFunc* appenders, void** dataArray, size_t count, unsigned long flushIntervalMs) {
+void SD32_appendBulkDataPersistent(AppenderFunc* appenders, void** dataArray, size_t count, unsigned long flushIntervalMs, unsigned long closeIntervalMs) {
   if (!_persistentFileOpen || !_persistentFile) {
     Serial.println("[SD] ERROR: Persistent file not open!");
     return;
@@ -241,5 +235,9 @@ void SD32_appendBulkDataPersistent(AppenderFunc* appenders, void** dataArray, si
   if (flushIntervalMs == 0 || (now - _lastFlushTime >= flushIntervalMs)) {
     _persistentFile.flush();
     _lastFlushTime = now;
+  }
+  if (closeIntervalMs == 0 || (now - _lastCloseTime >= closeIntervalMs)) {
+    _persistentFile.close();
+    _lastCloseTime = now;
   }
 }

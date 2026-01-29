@@ -85,8 +85,8 @@ void IMUupdate(Odometry* myimu, MPU6050 mpu ,bool &AvailableFlag){
   mpu.update();
   myimu->imu_accelx = mpu.getAccX();
   myimu->imu_accely = mpu.getAccY();
-  myimu->imu_accely = mpu.getAccZ();
-  myimu->imu_gyroz = mpu.getGyroX();
+  myimu->imu_accelz = mpu.getAccZ();
+  myimu->imu_gyrox = mpu.getGyroX();
   myimu->imu_gyroy = mpu.getGyroY();
   myimu->imu_gyroz = mpu.getGyroZ();
 }

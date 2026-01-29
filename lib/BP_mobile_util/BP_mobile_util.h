@@ -4,15 +4,19 @@
 #include "freertos/semphr.h"
 
 // Network
-#define DEFAULT_SSID "realme C55"
-#define DEFAULT_PASSWORD "realme1234"
-#define DEFAULT_SERVER_HOST "10.18.148.68"
+#define DEFAULT_SSID "dlink-D66C"
+#define DEFAULT_PASSWORD "kdapk67358"
+#define DEFAULT_SERVER_HOST "10.18.148.68" // Must be websocket IP
 #define DEFAULT_SERVER_PORT 3000
 #define DEFAULT_CLIENT_NAME "ESP32"
-#define DEFAULT_PUBLISH_RATE 5.0
+#define DEFAULT_PUBLISH_RATE 2.0
 
-// External Serial mutex (defined in node.cpp) - prevents garbled output across cores
+// Predefined in 
 extern SemaphoreHandle_t serialMutex;
+
+
+// Forward declaration 
+class WebSocketsClient;
 
 typedef struct {
   bool isRegistered = false;
@@ -21,9 +25,6 @@ typedef struct {
   unsigned long connectionStartTime = 0;
 } socketstatus;
 
-
-// Forward declaration 
-class WebSocketsClient;
 
 // CALLBACK TYPE def
 typedef void (*RegisterTopicFn)(const char* clientName);
@@ -61,67 +62,3 @@ public:
     void initWebSocket(const char* serverHost, int serverPort, const char* clientName);
     
 };
-
-
-
-
-/*
-
-// Header (keep in BP_mobile_util.h)
-class BPMobileConfig {
-public:
-  BPMobileConfig();
-  ~BPMobileConfig();
-
-  // public API
-  void initWebSocket(const char* serverHost, int serverPort, const char* clientName);
-  void handleMessage(const char* message);
-
-  // public (or provide accessors)
-  socketstatus* webSocketstatus = nullptr;
-  WebSocketsClient* webSocket = nullptr;
-
-  // disable copy
-  BPMobileConfig(const BPMobileConfig&) = delete;
-  BPMobileConfig& operator=(const BPMobileConfig&) = delete;
-
-private:
-  RegisterTopicFn _registration_cb = nullptr;
-  TimeProviderFn  _timesourceProvider_fn = nullptr;
-  const char* _client_name = "Unknown";
-};
-
-// CPP implementation (put in BP_mobile_util.cpp)
-// BPMobileConfig::BPMobileConfig()
-// : webSocketstatus(nullptr), webSocket(nullptr),
-//   _registration_cb(nullptr), _timesourceProvider_fn(nullptr), _client_name("Unknown") {}
-//
-// BPMobileConfig::~BPMobileConfig() {
-//   if (webSocket) { delete webSocket; webSocket = nullptr; }
-//   if (webSocketstatus) { delete webSocketstatus; webSocketstatus = nullptr; }
-// }
-
-*/
-
-// ============================================================================
-// SERVER TIME SYNC (NEW - Standalone functions for external time source)
-// ============================================================================
-
-/**
- * Request server time via WebSocket
- * Server should respond with {"type": "time_response", "server_time": <unix_ms>}
- */
-void BPMobile_requestServerTime(WebSocketsClient* ws);
-
-/**
- * Parse server time from incoming WebSocket message
- * Call this in your WebSocket message handler
- * Returns: server timestamp in ms, or 0 if message doesn't contain time
- */
-uint64_t BPMobile_parseServerTime(const char* payload);
-
-/**
- * Get last received server time
- * Returns: last server timestamp in ms, or 0 if never received
- */
-uint64_t BPMobile_getLastServerTime();
