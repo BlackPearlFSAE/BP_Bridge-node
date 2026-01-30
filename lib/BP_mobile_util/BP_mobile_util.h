@@ -6,8 +6,9 @@
 // Network
 #define DEFAULT_SSID "dlink-D66C"
 #define DEFAULT_PASSWORD "kdapk67358"
-#define DEFAULT_SERVER_HOST "10.18.148.68" // Must be websocket IP
-#define DEFAULT_SERVER_PORT 3000
+#define DEFAULT_SERVER_HOST "blackpearl-dashboard.netlify.app" // Must be websocket IP
+// #define DEFAULT_SERVER_PORT 3000
+#define DEFAULT_SERVER_PORT 443
 #define DEFAULT_CLIENT_NAME "ESP32"
 #define DEFAULT_PUBLISH_RATE 2.0
 
@@ -60,5 +61,5 @@ public:
     void syncMCUtime_with_provider(uint64_t time);
 
     void initWebSocket(const char* serverHost, int serverPort, const char* clientName);
-    
+    void initWebSocketSSL(const char* serverHost, int serverPort, const char* clientName);
 };

@@ -34,6 +34,32 @@ void BPMobileConfig::syncMCUtime_with_provider(uint64_t time){
             _timesourceProvider_fn(time); 
     }
 
+void BPMobileConfig::initWebSocketSSL(const char* serverHost, const int serverPort, const char* clientName) {
+  // Serial mutex protected prints (initWebSocket called from setup, but good practice)
+  if (serialMutex && xSemaphoreTake(serialMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+    Serial.println("--- WebSocket SSL Initialization ---");
+    Serial.print("Connecting to: wss://");
+    Serial.print(serverHost);Serial.print(":");Serial.println(serverPort);
+    xSemaphoreGive(serialMutex);
+  }
+
+  // set Event handler
+  this->webSocket->onEvent([this](WStype_t type, uint8_t* payload, size_t length) {
+    this->webSocketEvent(type, payload, length); });
+  this->webSocket->setReconnectInterval(5000);
+
+  // Begin WS (No SSL)
+  this->webSocket->beginSSL(serverHost, serverPort, "/");
+
+  if (this->webSocketstatus != nullptr) {
+    this->webSocketstatus->connectionStartTime = millis();
+  } else if (serialMutex && xSemaphoreTake(serialMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+    Serial.println("[ERROR] webSocketstatus is NULL!");
+    xSemaphoreGive(serialMutex);
+  }
+
+}
+
 void BPMobileConfig::initWebSocket(const char* serverHost, const int serverPort, const char* clientName) {
   // Serial mutex protected prints (initWebSocket called from setup, but good practice)
   if (serialMutex && xSemaphoreTake(serialMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
@@ -43,20 +69,12 @@ void BPMobileConfig::initWebSocket(const char* serverHost, const int serverPort,
     xSemaphoreGive(serialMutex);
   }
 
-  // // Debug: Check pointers before using
-  // Serial.print("[initWebSocket] webSocket=0x");
-  // Serial.print((unsigned long)this->webSocket, HEX);
-  // Serial.print(", webSocketstatus=0x");
-  // Serial.println((unsigned long)this->webSocketstatus, HEX);
-
-  /* 
-  * IMPORTANT: Set event handler BEFORE calling begin()
-  * avoid race conditions 
-  * */
+  // set Event handler
   this->webSocket->onEvent([this](WStype_t type, uint8_t* payload, size_t length) {
-    this->webSocketEvent(type, payload, length);
-  });
+    this->webSocketEvent(type, payload, length); });
   this->webSocket->setReconnectInterval(5000);
+
+  // Begin WS (No SSL)
   this->webSocket->begin(serverHost, serverPort, "/");
 
   if (this->webSocketstatus != nullptr) {
@@ -67,6 +85,8 @@ void BPMobileConfig::initWebSocket(const char* serverHost, const int serverPort,
   }
 
 }
+
+
 void BPMobileConfig::webSocketEvent(WStype_t type, uint8_t* payload, size_t length) {
 
   // Null pointer handling

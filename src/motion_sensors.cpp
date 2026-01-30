@@ -22,7 +22,7 @@ void GPSupdate(Odometry *mygps, HardwareSerial &gpsSerial, TinyGPSPlus &gps,bool
   }
   while (gpsSerial.available() > 0) {
     if (gps.encode(gpsSerial.read())) {
-      Serial.println(F("\n===== GPS Lat lng ====="));
+      // Serial.println(F("\n===== GPS Lat lng ====="));
       if (gps.location.isValid()) {
         mygps->gps_lat= gps.location.lat();
         mygps->gps_lng= gps.location.lng();
@@ -36,7 +36,7 @@ void GPSupdate(Odometry *mygps, HardwareSerial &gpsSerial, TinyGPSPlus &gps,bool
   }  
 }
 
-bool IMUinit([[maybe_unused]]TwoWire* WireIMU, MPU6050 mpu){
+bool IMUinit([[maybe_unused]]TwoWire* WireIMU, MPU6050 &mpu){
   
   byte status = mpu.begin();
   Serial.printf("MPU6050 status: %c\n", status);
@@ -66,7 +66,7 @@ bool IMUinit([[maybe_unused]]TwoWire* WireIMU, MPU6050 mpu){
   return false;
 }
 
-void IMUcalibrate(MPU6050 mpu,bool &AvailableFlag){
+void IMUcalibrate(MPU6050 &mpu, bool &AvailableFlag){
   if(!AvailableFlag){
     Serial.println("IMU isn't available: Can't Calibrate");
     return;
@@ -76,7 +76,7 @@ void IMUcalibrate(MPU6050 mpu,bool &AvailableFlag){
   mpu.calcOffsets(true,true); // gyro and accelero
   Serial.println("Done!\n");
 }
-void IMUupdate(Odometry* myimu, MPU6050 mpu ,bool &AvailableFlag){
+void IMUupdate(Odometry* myimu, MPU6050 &mpu, bool &AvailableFlag){
   // --- IMU update ---
   if(!AvailableFlag) {
     Serial.println("IMU isn't available: Can't read");

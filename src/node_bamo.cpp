@@ -382,10 +382,15 @@ void loop() {
   // Debug Output
   #if DEBUG_MODE > 0
   if (SESSION_TIME_MS - lastTeleplotDebug >= TELEPLOT_DEBUG_INTERVAL) {
+    BAMOCar debugBAMO;
+    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+      debugBAMO = myBAMOCar;
+      xSemaphoreGive(dataMutex);
+    }
     #if DEBUG_MODE == 1
-      Serial.printf("[DEBUG] BAMO: V=%.1fV I=%.1fA P=%.1fW\n", myBAMOCar.canVoltage, myBAMOCar.canCurrent, myBAMOCar.power);
+      Serial.printf("[DEBUG] BAMO: V=%.1fV I=%.1fA P=%.1fW\n", debugBAMO.canVoltage, debugBAMO.canCurrent, debugBAMO.power);
     #elif DEBUG_MODE == 2
-      teleplotBAMOCar(&myBAMOCar);
+      teleplotBAMOCar(&debugBAMO);
     #endif
     lastTeleplotDebug = SESSION_TIME_MS;
   }

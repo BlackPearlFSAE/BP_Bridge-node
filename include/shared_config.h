@@ -14,8 +14,7 @@
 // I2C Buses
 #define I2C1_SDA 18
 #define I2C1_SCL 17
-#define I2C2_SDA 42
-#define I2C2_SCL 41
+
 
 
 #define CAN_TX_PIN 48

@@ -24,9 +24,9 @@ void GPSupdate(Odometry *mygps, HardwareSerial &gpsSerial, TinyGPSPlus &gps,bool
 
 // --- IMU (MPU6050) ---
 
-bool IMUinit([[maybe_unused]]TwoWire* WireIMU,MPU6050 mpu);
-void IMUcalibrate(MPU6050 mpu,bool &AvaialbeFlag);
-void IMUupdate(Odometry* myimu, MPU6050 mpu,bool &AvailableFlag);
+bool IMUinit([[maybe_unused]]TwoWire* WireIMU, MPU6050 &mpu);
+void IMUcalibrate(MPU6050 &mpu, bool &AvailableFlag);
+void IMUupdate(Odometry* myimu, MPU6050 &mpu, bool &AvailableFlag);
 
 
 void mockOdometryData(Odometry *OdomSensors);

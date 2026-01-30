@@ -51,6 +51,8 @@
 #define GPS_RX_PIN 2
 #define GPS_TX_PIN 1
 #define GPS_BAUD 115200
+#define IMU_SDA 42
+#define IMU_SCL 41
 
 /************************* Global Variables ***************************/
 
@@ -227,8 +229,11 @@ void sdTask(void* parameter) {
         append_OdometryData_toCSVFile
       };
       void* structArray[appenderCount] = {
-        &entry.dataPoint, &entry.unixTime, &entry.sessionTime,
-        &entry.mech, &entry.odom
+        &entry.dataPoint, 
+        &entry.unixTime, 
+        &entry.sessionTime,
+        &entry.mech, 
+        &entry.odom
       };
 
       // Append one CSV row + newline; flushes to SD at SD_FLUSH_INTERVAL
@@ -271,18 +276,25 @@ void timeSyncTask(void* parameter) {
 // Core 1: Sensor Reading Task
 void sensorTask(void* parameter) {
   TickType_t xLastWakeTime = xTaskGetTickCount();
+  Mechanical localMech;
+  Odometry localOdom;
 
   while (true) {
+    // Read sensors into local structs
+    #if MOCK_FLAG == 0
+      RPMsensorUpdate(&localMech, RPM_CalcInterval, ENCODER_N);
+      StrokesensorUpdate(&localMech, STR_Heave, STR_Roll);
+      GPSupdate(&localOdom, gpsSerial, gps, GPSavailable);
+      IMUupdate(&localOdom, mpu, IMUavailable);
+    #else
+      mockMechanicalData(&localMech);
+      mockOdometryData(&localOdom);
+    #endif
+
+    // Brief Mutex protection to copy results into shared structs
     if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-      #if MOCK_FLAG == 0
-        // RPMsensorUpdate(&myMechData, RPM_CalcInterval, ENCODER_N);
-        StrokesensorUpdate(&myMechData, STR_Heave, STR_Roll);
-        GPSupdate(&myOdometryData, gpsSerial, gps, GPSavailable);
-        // IMUupdate(&myOdometryData, mpu, IMUavailable);
-      #else
-        mockMechanicalData(&myMechData);
-        mockOdometryData(&myOdometryData);
-      #endif
+      myMechData = localMech;
+      myOdometryData = localOdom;
       xSemaphoreGive(dataMutex);
     }
     vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(20));  // 50Hz
@@ -297,7 +309,7 @@ void setup() {
 
   // I2C Init
   I2C1_connect = Wire1.begin(I2C1_SDA, I2C1_SCL);
-  I2C2_connect = Wire.begin(I2C2_SDA, I2C2_SCL);
+  I2C2_connect = Wire.begin(IMU_SDA, IMU_SCL);
   Wire1.setTimeout(2);
   Wire.setTimeout(2);
 
@@ -305,14 +317,14 @@ void setup() {
   RTCavailable = RTCinit(rtc, &Wire1);
 
   // Motion Sensor Init
-  // IMUavailable = IMUinit(&Wire, mpu);
+  IMUavailable = IMUinit(&Wire, mpu);
   delay(1000);
   IMUcalibrate(mpu, IMUavailable);
   GPSavailable = GPSinit(gpsSerial, GPS_TX_PIN, GPS_RX_PIN, GPS_BAUD);
 
   // Base Sensor Init
-  // RPMinit_withExtPullUP(ENCODER_PINL, ENCODER_PINR);
-  // RPM_setCalcPeriod(My_timer, 100);
+  RPMinit_withExtPullUP(ENCODER_PINL, ENCODER_PINR);
+  RPM_setCalcPeriod(My_timer, 100);
   StrokesensorInit(STR_Heave, STR_Roll);
 
   // WiFi & WebSocket
@@ -322,7 +334,7 @@ void setup() {
     ntpready = WiFi32_initNTP();
     BPMobile.setClientName(clientName);
     BPMobile.setRegisterCallback(registerClient);
-    BPMobile.initWebSocket(serverHost, serverPort, clientName);
+    BPMobile.initWebSocketSSL(serverHost, serverPort, clientName);
   }
 
   // SD Card Init
@@ -392,14 +404,21 @@ void loop() {
   // Debug Output
   #if DEBUG_MODE > 0
   if (SESSION_TIME_MS - lastTeleplotDebug >= TELEPLOT_DEBUG_INTERVAL) {
+    Mechanical debugMech;
+    Odometry debugOdom;
+    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+      debugMech = myMechData;
+      debugOdom = myOdometryData;
+      xSemaphoreGive(dataMutex);
+    }
     #if DEBUG_MODE == 1
-      Serial.printf("[DEBUG] Mech: RPM_L=%.1f RPM_R=%.1f\n", myMechData.Wheel_RPM_L, myMechData.Wheel_RPM_R);
-      Serial.printf("[DEBUG] Odom: GPS(%.6f,%.6f) IMU(%.2f,%.2f,%.2f)\n",
-        myOdometryData.gps_lat, myOdometryData.gps_lng,
-        myOdometryData.imu_accelx, myOdometryData.imu_accely, myOdometryData.imu_accelz);
+      Serial.printf("[DEBUG] Mech: RPM_L=%.1f RPM_R=%.1f\n", debugMech.Wheel_RPM_L, debugMech.Wheel_RPM_R);
+      Serial.printf("[DEBUG] Odom: GPS(%.3f,%.3f) IMU(%.2f,%.2f,%.2f)\n",
+        debugOdom.gps_lat, debugOdom.gps_lng,
+        debugOdom.imu_accelx, debugOdom.imu_accely, debugOdom.imu_accelz);
     #elif DEBUG_MODE == 2
-      teleplotMechanical(&myMechData);
-      teleplotOdometry(&myOdometryData);
+      teleplotMechanical(&debugMech);
+      teleplotOdometry(&debugOdom);
     #endif
     lastTeleplotDebug = SESSION_TIME_MS;
   }

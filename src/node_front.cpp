@@ -272,16 +272,23 @@ void timeSyncTask(void* parameter) {
 // Core 1: Sensor Reading Task
 void sensorTask(void* parameter) {
   TickType_t xLastWakeTime = xTaskGetTickCount();
+  Mechanical localMech;
+  Electrical localElect;
 
   while (true) {
+    // Read sensors into local structs (no mutex needed for hardware reads)
+    #if MOCK_FLAG == 0
+      StrokesensorUpdate(&localMech, STR_Heave, STR_Roll);
+      ElectSensorsUpdate(&localElect, ElectPinArray);
+    #else
+      mockMechanicalData(&localMech);
+      mockElectricalData(&localElect);
+    #endif
+
+    // Brief lock to copy results into shared structs
     if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-      #if MOCK_FLAG == 0
-        StrokesensorUpdate(&myMechData, STR_Heave, STR_Roll);
-        ElectSensorsUpdate(&myElectData, ElectPinArray);
-      #else
-        mockMechanicalData(&myMechData);
-        mockElectricalData(&myElectData);
-      #endif
+      myMechData = localMech;
+      myElectData = localElect;
       xSemaphoreGive(dataMutex);
     }
     vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(10));  // 100Hz
@@ -382,12 +389,19 @@ void loop() {
   // Debug Output
   #if DEBUG_MODE > 0
   if (SESSION_TIME_MS - lastTeleplotDebug >= TELEPLOT_DEBUG_INTERVAL) {
+    Mechanical debugMech;
+    Electrical debugElect;
+    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+      debugMech = myMechData;
+      debugElect = myElectData;
+      xSemaphoreGive(dataMutex);
+    }
     #if DEBUG_MODE == 1
-      Serial.printf("[DEBUG] Mech: Heave=%.1f Roll=%.1f\n", myMechData.STR_Heave_mm, myMechData.STR_Roll_mm);
-      Serial.printf("[DEBUG] Elect: I=%.2fA APPS=%.1f BPPS=%.1f\n", myElectData.I_SENSE, myElectData.APPS, myElectData.BPPS);
+      Serial.printf("[DEBUG] Mech: Heave=%.1f Roll=%.1f\n", debugMech.STR_Heave_mm, debugMech.STR_Roll_mm);
+      Serial.printf("[DEBUG] Elect: I=%.2fA APPS=%.1f BPPS=%.1f\n", debugElect.I_SENSE, debugElect.APPS, debugElect.BPPS);
     #elif DEBUG_MODE == 2
-      teleplotMechanical(&myMechData);
-      teleplotElectrical(&myElectData);
+      teleplotMechanical(&debugMech);
+      teleplotElectrical(&debugElect);
     #endif
     lastTeleplotDebug = SESSION_TIME_MS;
   }

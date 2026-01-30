@@ -11,6 +11,7 @@ static File _persistentFile;
 static bool _persistentFileOpen = false;
 static unsigned long _lastFlushTime = 0;
 static unsigned long _lastCloseTime = 0;
+static char _persistentFilePath[48] = {0};
 
 // ============================================================================
 // SD CARD INITIALIZATION
@@ -188,6 +189,8 @@ bool SD32_openPersistentFile(const char* filepath) {
 
   _persistentFileOpen = true;
   _lastFlushTime = millis();
+  strncpy(_persistentFilePath, filepath, sizeof(_persistentFilePath) - 1);
+  _persistentFilePath[sizeof(_persistentFilePath) - 1] = '\0';
   Serial.printf("[SD] Persistent file opened: %s\n", filepath);
   return true;
 }
@@ -197,6 +200,7 @@ void SD32_closePersistentFile() {
     _persistentFile.flush();
     _persistentFile.close();
     _persistentFileOpen = false;
+    _persistentFilePath[0] = '\0';
     Serial.println("[SD] Persistent file closed");
   }
 }
@@ -210,13 +214,6 @@ void SD32_flushPersistentFile() {
     _persistentFile.flush();
     _lastFlushTime = millis();
   }
-}
-
-size_t SD32_getPersistentFileSize() {
-  if (_persistentFileOpen && _persistentFile) {
-    return _persistentFile.size();
-  }
-  return 0;
 }
 
 void SD32_appendBulkDataPersistent(AppenderFunc* appenders, void** dataArray, size_t count, unsigned long flushIntervalMs, unsigned long closeIntervalMs) {
@@ -236,8 +233,15 @@ void SD32_appendBulkDataPersistent(AppenderFunc* appenders, void** dataArray, si
     _persistentFile.flush();
     _lastFlushTime = now;
   }
-  if (closeIntervalMs == 0 || (now - _lastCloseTime >= closeIntervalMs)) {
+  if (closeIntervalMs > 0 && (now - _lastCloseTime >= closeIntervalMs)) {
+    _persistentFile.flush();
     _persistentFile.close();
+    // Reopen the file
+    _persistentFile = SD.open(_persistentFilePath, FILE_APPEND);
+    if (!_persistentFile) {
+      _persistentFileOpen = false;
+      Serial.println("[SD] ERROR: Could not reopen persistent file after cycle!");
+    }
     _lastCloseTime = now;
   }
 }

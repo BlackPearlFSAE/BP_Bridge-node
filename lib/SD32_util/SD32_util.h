@@ -47,7 +47,4 @@ void SD32_appendBulkDataPersistent(AppenderFunc* appenders, void** dataArray, si
 // Force flush (call before power off or SD removal)
 void SD32_flushPersistentFile();
 
-// Get current file size (for size-based rotation)
-size_t SD32_getPersistentFileSize();
-
 #endif

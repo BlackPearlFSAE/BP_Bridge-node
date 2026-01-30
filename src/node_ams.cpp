@@ -140,6 +140,7 @@ struct SDLogEntry {
 // File handles for persistent logging (one per BMU)
 static File bmuFiles[MODULE_NUM];
 static bool filesOpen = false;
+static volatile bool closeRequested = false;  // Signal from loop() to sdTask
 
 // Core 0: WiFi/WebSocket Task
 void BPMobileTask(void* parameter) {
@@ -206,6 +207,15 @@ void sdTask(void* parameter) {
   while (true) {
     // Block until loop() enqueues a log entry
     if (xQueueReceive(sdQueue, &entry, portMAX_DELAY) == pdTRUE) {
+      // Handle close request from loop() safely within sdTask context
+      if (closeRequested) {
+        closeAllFiles();
+        sdCardReady = false;
+        closeRequested = false;
+        Serial.println("[SD Card] Card removed - files closed safely");
+        continue;
+      }
+
       if (!sdCardReady || !filesOpen) {
         continue;
       }
@@ -388,10 +398,15 @@ void loop() {
   // Debug Output
   #if DEBUG_MODE > 0
   if (SESSION_TIME_MS - lastTeleplotDebug >= TELEPLOT_DEBUG_INTERVAL) {
+    BMUdata debugBMU;
+    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+      debugBMU = BMU_Package[0];
+      xSemaphoreGive(dataMutex);
+    }
     #if DEBUG_MODE == 1
-      debugBMUModule(BMU_Package, 0);
+      debugBMUModule(&debugBMU, 0);
     #elif DEBUG_MODE == 2
-      teleplotBMU(&BMU_Package[0], 0);
+      teleplotBMU(&debugBMU, 0);
     #endif
     lastTeleplotDebug = SESSION_TIME_MS;
   }
@@ -405,11 +420,9 @@ void loop() {
     }
   #endif
 
-  // Check SD card health
+  // Check SD card health — signal sdTask to close files safely
   if (sdCardReady && !SD32_checkSDconnect()) {
-    closeAllFiles();
-    sdCardReady = false;
-    Serial.println("[SD Card] Card removed - files closed safely");
+    closeRequested = true;
   }
 
   // Queue SD log entry
