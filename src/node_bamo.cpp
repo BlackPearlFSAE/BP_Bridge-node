@@ -112,6 +112,7 @@ void showDeviceStatus();
 #define MOCK_FLAG 1
 #define calibrate_RTC 0
 #define DEBUG_MODE 0  // 0 = Disabled, 1 = Regular Serial, 2 = Teleplot
+#define TIME_SRC 0 // 0 = RTC , 1 = WiFI NTP Pool
 
 /************************* FreeRTOS ***************************/
 
@@ -221,7 +222,11 @@ void timeSyncTask(void* parameter) {
 
     // Local RTC poll every 1s
     if (SESSION_TIME - lastLocalSync >= LOCAL_SYNC_INTERVAL) {
+      #if TIME_SRC == 0
       uint64_t t = (uint64_t)RTC_getUnix(rtc, RTCavailable) * 1000ULL;
+      #elif TIME_SRC == 1
+      uint64_t t = WiFi32_getNTPTime();
+      #endif
       if (t > 0) syncTime_setSyncPoint(RTC_UNIX_TIME, t);
       lastLocalSync = SESSION_TIME;
     }
@@ -306,6 +311,12 @@ void setup() {
 
   // RTC Init
   RTCavailable = RTCinit(rtc, &Wire1);
+  // Sync ESP32 internal clock from DS3231 so FAT file timestamps are correct
+  if (RTCavailable) {
+    struct timeval tv = { .tv_sec = (time_t)rtc.now().unixtime(), .tv_usec = 0 };
+    settimeofday(&tv, NULL);
+    Serial.println("[RTC] ESP32 system clock set from DS3231");
+  }
 
   // WiFi & WebSocket
   initWiFi(ssid, password, 10);

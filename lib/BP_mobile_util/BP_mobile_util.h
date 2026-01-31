@@ -3,15 +3,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
-// Network
-#define DEFAULT_SSID "dlink-D66C"
-#define DEFAULT_PASSWORD "kdapk67358"
-#define DEFAULT_SERVER_HOST "blackpearl-dashboard.netlify.app" // Must be websocket IP
-// #define DEFAULT_SERVER_PORT 3000
-#define DEFAULT_SERVER_PORT 443
-#define DEFAULT_CLIENT_NAME "ESP32"
-#define DEFAULT_PUBLISH_RATE 2.0
-
 // Predefined in 
 extern SemaphoreHandle_t serialMutex;
 
