@@ -106,20 +106,12 @@ void publishBMUfaults(BMUdata* bmu, int moduleNum);
 void registerClient(const char* clientName);
 
 // File Management
-void mockBMUData();
 void showDeviceStatus();
 void append_BMU_toCSVFile(File& dataFile, BMUdata* bmu, int dp, uint64_t Timestamp, uint64_t session);
 void createPartitionDir();
 void openAllFiles();
 void closeAllFiles();
 void flushAllFiles();
-
-/************************* Build Flags ***************************/
-
-#define MOCK_DATA 1
-#define calibrate_RTC 0
-#define DEBUG_MODE 0  // 0 = Disabled, 1 = Regular Serial, 2 = Teleplot
-#define TIME_SRC 0 // 0 = RTC , 1 = WiFI NTP Pool
 
 /************************* FreeRTOS ***************************/
 
@@ -328,7 +320,11 @@ void setup() {
   RTCavailable = RTCinit(rtc,&Wire1);
   // Sync ESP32 internal clock from DS3231 so FAT file timestamps are correct
   if (RTCavailable) {
+    #if TIME_SRC == 0
     struct timeval tv = { .tv_sec = (time_t)rtc.now().unixtime(), .tv_usec = 0 };
+    #elif TIME_SRC == 1
+    struct timeval tv = { .tv_sec = (time_t)WiFi32_getNTPTime(), .tv_usec = 0 };
+    #endif
     settimeofday(&tv, NULL);
     Serial.println("[RTC] ESP32 system clock set from DS3231");
   }
@@ -375,11 +371,11 @@ void setup() {
   Serial.println("[RTOS] TimeSync task on Core 0 (pri 3)");
 
   // Core 1 tasks
-  #if MOCK_DATA == 0
+  #if MOCK_FLAG == 0
     xTaskCreatePinnedToCore(canTask, "CANTask", 4096, NULL, 5, &canTaskHandle, 1);
     Serial.println("[RTOS] CAN task on Core 1 (pri 5)");
   #else
-    Serial.println("[RTOS] CAN task SKIPPED (MOCK_DATA=1)");
+    Serial.println("[RTOS] CAN task SKIPPED (MOCK_FLAG=1)");
   #endif
 
   xTaskCreatePinnedToCore(sdTask, "SDTask", 8192, NULL, 2, &sdTaskHandle, 1);
@@ -425,9 +421,11 @@ void loop() {
   #endif
 
   // Mock data for testing (remove in production)
-  #if MOCK_DATA == 1
+  #if MOCK_FLAG == 1
     if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-      mockBMUData();
+      for (int i = 0; i < MODULE_NUM; i++) {
+        mockBMU(&BMU_Package[i], i);
+      }
       xSemaphoreGive(dataMutex);
     }
   #endif
@@ -542,7 +540,7 @@ void append_BMU_toCSVFile(File& dataFile, BMUdata* bmu, int dp, uint64_t Timesta
   // Status (balancing as hex bitmask)
   dataFile.print(bmu->BalancingDischarge_Cells, HEX); dataFile.print(",");
   dataFile.print(bmu->BMUconnected); dataFile.print(",");
-  dataFile.print(bmu->BMUneedBalance);
+  dataFile.println(bmu->BMUneedBalance);
 }
 
 /************************* BPMobile Publishers ***************************/
@@ -673,62 +671,6 @@ void publishBMUfaults(BMUdata* bmu, int moduleNum) {
   BPwebSocket->sendTXT(msg);
 }
 
-void mockBMUData() {
-    // Half identical (good modules)
-    for (int i = 0; i < MODULE_NUM / 2; i++) {
-        BMU_Package[i].BMU_ID = 0x18200001 + (i << 16);
-        BMU_Package[i].BMUconnected = true;
-        BMU_Package[i].BMUneedBalance = 1;
-        BMU_Package[i].DV = 5;
-        BMU_Package[i].TEMP_SENSE[0] = 0xC8;
-        BMU_Package[i].TEMP_SENSE[1] = 0xC8;
-        
-        for (int j = 0; j < CELL_NUM; j++) {
-            BMU_Package[i].V_CELL[j] = 185;
-        }
-        
-        BMU_Package[i].OVERVOLTAGE_WARNING = 0x0000;
-        BMU_Package[i].OVERVOLTAGE_CRITICAL = 0x0000;
-        BMU_Package[i].LOWVOLTAGE_WARNING = 0x0000;
-        BMU_Package[i].LOWVOLTAGE_CRITICAL = 0x0000;
-        BMU_Package[i].OVERTEMP_WARNING = 0x0000;
-        BMU_Package[i].OVERTEMP_CRITICAL = 0x0000;
-        BMU_Package[i].OVERDIV_VOLTAGE_WARNING = 0x0000;
-        BMU_Package[i].OVERDIV_VOLTAGE_CRITICAL = 0x0000;
-        BMU_Package[i].BalancingDischarge_Cells = 0x0000;
-    }
-    
-    // Half mixed bag (faulty modules)
-    for (int i = MODULE_NUM / 2; i < MODULE_NUM; i++) {
-        BMU_Package[i].BMU_ID = 0x18200001 + (i << 16);
-        BMU_Package[i].BMUconnected = true;
-        BMU_Package[i].BMUneedBalance = 0;
-        BMU_Package[i].DV = 15;
-        BMU_Package[i].TEMP_SENSE[0] = 0xFA;
-        BMU_Package[i].TEMP_SENSE[1] = 0xD0;
-        
-        BMU_Package[i].V_CELL[0] = 210;
-        BMU_Package[i].V_CELL[1] = 205;
-        BMU_Package[i].V_CELL[2] = 160;
-        BMU_Package[i].V_CELL[3] = 185;
-        BMU_Package[i].V_CELL[4] = 190;
-        BMU_Package[i].V_CELL[5] = 155;
-        BMU_Package[i].V_CELL[6] = 200;
-        BMU_Package[i].V_CELL[7] = 185;
-        BMU_Package[i].V_CELL[8] = 195;
-        BMU_Package[i].V_CELL[9] = 175;
-        
-        BMU_Package[i].OVERVOLTAGE_WARNING = 0x0200;
-        BMU_Package[i].OVERVOLTAGE_CRITICAL = 0x0000;
-        BMU_Package[i].LOWVOLTAGE_WARNING = 0x0090;
-        BMU_Package[i].LOWVOLTAGE_CRITICAL = 0x0000;
-        BMU_Package[i].OVERTEMP_WARNING = 0x0200;
-        BMU_Package[i].OVERTEMP_CRITICAL = 0x0000;
-        BMU_Package[i].OVERDIV_VOLTAGE_WARNING = 0x0094;
-        BMU_Package[i].OVERDIV_VOLTAGE_CRITICAL = 0x0000;
-        BMU_Package[i].BalancingDischarge_Cells = 0x0201;
-    }
-}
 
 /************************* Teleplot Debug Functions ***************************/
 
@@ -742,17 +684,14 @@ void teleplotBMU(BMUdata *bmu, int moduleNum) {
 
 void showDeviceStatus() {
   Serial.println("╔═════════════════════════════════════════════╗");
-  Serial.println("║         REAR NODE - SYSTEM STATUS           ║");
+  Serial.println("║         AMS NODE - SYSTEM STATUS            ║");
   Serial.println("╠═════════════════════════════════════════════╣");
   Serial.printf("║ I2C1:         %s\n", I2C1_connect ? "OK" : "FAIL");
-  // Serial.printf("║ I2C2:         %s\n", I2C2_connect ? "OK" : "FAIL");
+  Serial.printf("║ CAN Bus:      %s\n", canBusReady ? "OK" : "FAIL");
   Serial.printf("║ SD Card:      %s\n", sdCardReady ? "OK" : "FAIL");
   Serial.printf("║ WiFi:         %s (RSSI: %d)\n", WiFi.status() == WL_CONNECTED ? "OK" : "FAIL", WiFi.RSSI());
   Serial.printf("║ RTC:          %s\n", RTCavailable ? "OK" : "FAIL");
   Serial.printf("║ WebSocket:    %s\n", BPsocketstatus->isConnected ? "OK" : "FAIL");
   Serial.printf("║ Time Sync:    %s\n", syncTime_isSynced() ? "OK" : "FAIL");
-  // Serial.println("╠═════════════════════════════════════════════╣");
-  // Serial.printf("║ IMU:          %s\n", IMUavailable ? "OK" : "FAIL");
-  // Serial.printf("║ GPS:          %s\n", gpsSerial.available() > 0 ? "OK" : "FAIL");
   Serial.println("╚═════════════════════════════════════════════╝");
 }

@@ -97,3 +97,8 @@ void teleplotBMUFaults(BMUdata *myBMU, int moduleNum);
 void teleplotOBCmsg(OBCdata *myOBC);
 void teleplotAllModules(BMUdata *BMU_Package, int moduleCount);
 void teleplotLocalCells(float *cellvoltages, int cellCount, const char* prefix);
+
+// Mock data generators (for testing without hardware)
+void mockBMU(BMUdata *bmu, int moduleNum);
+void mockAMS(AMSdata *ams, BMUdata *bmuArray);
+void mockOBC(OBCdata *obc);

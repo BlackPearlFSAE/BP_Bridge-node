@@ -176,3 +176,96 @@ void teleplotLocalCells(float* cellvoltages, int cellCount, const char* prefix) 
   }
 }
 
+/************************* Mock Data Generators ***************************/
+
+void mockBMU(BMUdata* bmu, int moduleNum) {
+  bmu->BMU_ID = 0x18200001 + (moduleNum << 16);
+  bmu->BMUconnected = true;
+
+  if (moduleNum < MODULE_NUM / 2) {
+    // Good modules: uniform cells, no faults
+    bmu->BMUneedBalance = 1;
+    bmu->DV = 5;
+    bmu->TEMP_SENSE[0] = 0xC8;
+    bmu->TEMP_SENSE[1] = 0xC8;
+    for (int j = 0; j < CELL_NUM; j++) {
+      bmu->V_CELL[j] = 185;
+    }
+    bmu->OVERVOLTAGE_WARNING = 0x0000;
+    bmu->OVERVOLTAGE_CRITICAL = 0x0000;
+    bmu->LOWVOLTAGE_WARNING = 0x0000;
+    bmu->LOWVOLTAGE_CRITICAL = 0x0000;
+    bmu->OVERTEMP_WARNING = 0x0000;
+    bmu->OVERTEMP_CRITICAL = 0x0000;
+    bmu->OVERDIV_VOLTAGE_WARNING = 0x0000;
+    bmu->OVERDIV_VOLTAGE_CRITICAL = 0x0000;
+    bmu->BalancingDischarge_Cells = 0x0000;
+  } else {
+    // Faulty modules: mixed cells, some faults
+    bmu->BMUneedBalance = 0;
+    bmu->DV = 15;
+    bmu->TEMP_SENSE[0] = 0xFA;
+    bmu->TEMP_SENSE[1] = 0xD0;
+    bmu->V_CELL[0] = 210;
+    bmu->V_CELL[1] = 205;
+    bmu->V_CELL[2] = 160;
+    bmu->V_CELL[3] = 185;
+    bmu->V_CELL[4] = 190;
+    bmu->V_CELL[5] = 155;
+    bmu->V_CELL[6] = 200;
+    bmu->V_CELL[7] = 185;
+    bmu->V_CELL[8] = 195;
+    bmu->V_CELL[9] = 175;
+    bmu->OVERVOLTAGE_WARNING = 0x0200;
+    bmu->OVERVOLTAGE_CRITICAL = 0x0000;
+    bmu->LOWVOLTAGE_WARNING = 0x0090;
+    bmu->LOWVOLTAGE_CRITICAL = 0x0000;
+    bmu->OVERTEMP_WARNING = 0x0200;
+    bmu->OVERTEMP_CRITICAL = 0x0000;
+    bmu->OVERDIV_VOLTAGE_WARNING = 0x0094;
+    bmu->OVERDIV_VOLTAGE_CRITICAL = 0x0000;
+    bmu->BalancingDischarge_Cells = 0x0201;
+  }
+}
+
+void mockAMS(AMSdata* ams, BMUdata* bmuArray) {
+  // Compute accumulator voltage from all modules
+  float totalVoltage = 0.0f;
+  bool anyOVWarn = false, anyOVCrit = false;
+  bool anyLVWarn = false, anyLVCrit = false;
+  bool anyOTWarn = false, anyOTCrit = false;
+  bool anyDVWarn = false, anyDVCrit = false;
+
+  for (int i = 0; i < MODULE_NUM; i++) {
+    totalVoltage += bmuArray[i].V_MODULE * 0.02f;
+    if (bmuArray[i].OVERVOLTAGE_WARNING)  anyOVWarn = true;
+    if (bmuArray[i].OVERVOLTAGE_CRITICAL) anyOVCrit = true;
+    if (bmuArray[i].LOWVOLTAGE_WARNING)   anyLVWarn = true;
+    if (bmuArray[i].LOWVOLTAGE_CRITICAL)  anyLVCrit = true;
+    if (bmuArray[i].OVERTEMP_WARNING)     anyOTWarn = true;
+    if (bmuArray[i].OVERTEMP_CRITICAL)    anyOTCrit = true;
+    if (bmuArray[i].OVERDIV_VOLTAGE_WARNING)  anyDVWarn = true;
+    if (bmuArray[i].OVERDIV_VOLTAGE_CRITICAL) anyDVCrit = true;
+  }
+
+  ams->ACCUM_VOLTAGE = totalVoltage;
+  ams->OVERVOLT_WARNING = anyOVWarn;
+  ams->OVERVOLT_CRITICAL = anyOVCrit;
+  ams->LOWVOLT_WARNING = anyLVWarn;
+  ams->LOWVOLT_CRITICAL = anyLVCrit;
+  ams->OVERTEMP_WARNING = anyOTWarn;
+  ams->OVERTEMP_CRITICAL = anyOTCrit;
+  ams->OVERDIV_WARNING = anyDVWarn;
+  ams->OVERDIV_CRITICAL = anyDVCrit;
+
+  ams->AMS_OK = !(anyOVCrit || anyLVCrit || anyOTCrit || anyDVCrit);
+  ams->ACCUM_CHG_READY = ams->AMS_OK && !anyOVWarn;
+}
+
+void mockOBC(OBCdata* obc) {
+  obc->OBCVolt = 4800;   // 48.00V (typical charger voltage)
+  obc->OBCAmp = 100;     // 1.00A (typical charge current)
+  obc->OBCstatusbit = 0; // No faults
+  obc->OBC_OK = true;
+}
+

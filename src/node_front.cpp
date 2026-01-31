@@ -129,13 +129,6 @@ void registerClient(const char* clientName);
 // Debug
 void showDeviceStatus();
 
-/************************* Build Flags ***************************/
-
-#define MOCK_FLAG 1
-#define calibrate_RTC 0
-#define DEBUG_MODE 0  // 0 = Disabled, 1 = Regular Serial, 2 = Teleplot
-#define TIME_SRC 1 // 0 = RTC , 1 = WiFI NTP Pool
-
 /************************* FreeRTOS ***************************/
 
 SemaphoreHandle_t dataMutex = NULL;
@@ -313,10 +306,15 @@ void setup() {
   RTCavailable = RTCinit(rtc, &Wire1);
   // Sync ESP32 internal clock from DS3231 so FAT file timestamps are correct
   if (RTCavailable) {
+    #if TIME_SRC == 0
     struct timeval tv = { .tv_sec = (time_t)rtc.now().unixtime(), .tv_usec = 0 };
+    #elif TIME_SRC == 1
+    struct timeval tv = { .tv_sec = (time_t)WiFi32_getNTPTime(), .tv_usec = 0 };
+    #endif
     settimeofday(&tv, NULL);
     Serial.println("[RTC] ESP32 system clock set from DS3231");
   }
+
 
   // Sensor Init
   StrokesensorInit(STR_Heave, STR_Roll);
@@ -525,7 +523,6 @@ void publishElectFaultState(Electrical* ElectSensors) {
   String msg;
   serializeJson(doc, msg);
   BPwebSocket->sendTXT(msg);
-  Serial.println(msg);
 }
 
 void registerClient(const char* clientName) {

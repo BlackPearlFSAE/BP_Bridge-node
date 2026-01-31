@@ -107,13 +107,6 @@ void registerClient(const char* clientName);
 // Debug
 void showDeviceStatus();
 
-/************************* Build Flags ***************************/
-
-#define MOCK_FLAG 1
-#define calibrate_RTC 0
-#define DEBUG_MODE 0  // 0 = Disabled, 1 = Regular Serial, 2 = Teleplot
-#define TIME_SRC 0 // 0 = RTC , 1 = WiFI NTP Pool
-
 /************************* FreeRTOS ***************************/
 
 SemaphoreHandle_t dataMutex = NULL;
@@ -144,7 +137,6 @@ void BPMobileTask(void* parameter) {
 
     if (WiFi.status() == WL_CONNECTED)
       BPwebSocket->loop();
-    
 
     if (BPsocketstatus->isRegistered && BPsocketstatus->isConnected) {
       if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
@@ -202,9 +194,7 @@ void sdTask(void* parameter) {
         &entry.bamo
       };
 
-      // Append one CSV row + newline; 
-      // flushes to SD at SD_FLUSH_INTERVAL , close SD file at SD_CLOSE_INTERVAL 
-            // Append one CSV row + newline; flushes to SD at SD_FLUSH_INTERVAL
+      // Append one CSV row + newline; flushes to SD at SD_FLUSH_INTERVAL
       SD32_appendBulkDataPersistent(appenders, structArray, appenderCount
                                     , SD_FLUSH_INTERVAL,SD_CLOSE_INTERVAL);
       localDataPoint++;
@@ -313,10 +303,15 @@ void setup() {
   RTCavailable = RTCinit(rtc, &Wire1);
   // Sync ESP32 internal clock from DS3231 so FAT file timestamps are correct
   if (RTCavailable) {
+    #if TIME_SRC == 0
     struct timeval tv = { .tv_sec = (time_t)rtc.now().unixtime(), .tv_usec = 0 };
+    #elif TIME_SRC == 1
+    struct timeval tv = { .tv_sec = (time_t)WiFi32_getNTPTime(), .tv_usec = 0 };
+    #endif
     settimeofday(&tv, NULL);
     Serial.println("[RTC] ESP32 system clock set from DS3231");
   }
+
 
   // WiFi & WebSocket
   initWiFi(ssid, password, 10);
@@ -325,7 +320,7 @@ void setup() {
     ntpready = WiFi32_initNTP();
     BPMobile.setClientName(clientName);
     BPMobile.setRegisterCallback(registerClient);
-    BPMobile.initWebSocket(serverHost, serverPort, clientName);
+    BPMobile.initWebSocketSSL(serverHost, serverPort, clientName);
   }
 
   // SD Card Init
@@ -345,6 +340,17 @@ void setup() {
     RTCcalibrate(rtc,(ntpready) ? (WiFi32_getNTPTime()/1000ULL): 1000000000000ULL ,RTCavailable);
   #endif
   syncTime_setSyncPoint(RTC_UNIX_TIME, (RTCavailable) ? RTC_getUnix(rtc, RTCavailable) : 1000000000000ULL);
+
+  // Sync ESP32 internal clock from DS3231 so FAT file timestamps are correct
+  if (RTCavailable) {
+    #if TIME_SRC == 0
+    struct timeval tv = { .tv_sec = (time_t)rtc.now().unixtime(), .tv_usec = 0 };
+    #elif TIME_SRC == 1
+    struct timeval tv = { .tv_sec = (time_t)WiFi32_getNTPTime(), .tv_usec = 0 };
+    #endif
+    settimeofday(&tv, NULL);
+    Serial.println("[RTC] ESP32 system clock set from DS3231");
+  }
 
   Serial.println("==================================================");
   Serial.println("BP Bridge Sensor Node - BAMO (CAN) - Ready");
@@ -418,7 +424,6 @@ void loop() {
   }
 
   #if MOCK_FLAG == 1
-
     if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
       mockBAMOCarData(&myBAMOCar);
       xSemaphoreGive(dataMutex);
@@ -432,7 +437,7 @@ void loop() {
     Serial.println("[SD] Card removed");
   }
 
-  // Manaully Queue the  SD Log Entry
+  // Queue SD Log Entry
   if (sdCardReady && sdQueue != NULL && (SESSION_TIME_MS - lastSDLog >= SD_APPEND_INTERVAL)) {
     SDLogEntry entry;
     entry.dataPoint = dataPoint;
