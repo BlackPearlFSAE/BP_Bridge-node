@@ -71,7 +71,7 @@ socketstatus* BPsocketstatus = BPMobile.webSocketstatus;
 // Sampling Rates (Hz)
 const float MECH_SENSORS_SAMPLING_RATE = DEFAULT_PUBLISH_RATE;
 const float ELECT_SENSORS_SAMPLING_RATE = DEFAULT_PUBLISH_RATE;
-const float ELECT_FAULT_STAT_SAMPLING_RATE = (DEFAULT_PUBLISH_RATE/5);
+const float ELECT_FAULT_STAT_SAMPLING_RATE = (DEFAULT_PUBLISH_RATE/2);
 
 // Sensor Data
 Mechanical myMechData;
@@ -134,7 +134,7 @@ void showDeviceStatus();
 #define MOCK_FLAG 1
 #define calibrate_RTC 0
 #define DEBUG_MODE 0  // 0 = Disabled, 1 = Regular Serial, 2 = Teleplot
-#define TIME_SRC 0 // 0 = RTC , 1 = WiFI NTP Pool
+#define TIME_SRC 1 // 0 = RTC , 1 = WiFI NTP Pool
 
 /************************* FreeRTOS ***************************/
 
@@ -486,114 +486,46 @@ void showDeviceStatus() {
 
 void publishMechData(Mechanical* MechSensors) {
   uint64_t timestamp = syncTime_calcRelative_ms(RTC_UNIX_TIME);
-
-  JsonDocument sH;
-  sH["type"] = "data";
-  sH["topic"] = "sensors/stroke_Heave_distanceMM";
-  sH["data"]["value"] = MechSensors->STR_Heave_mm;
-  sH["data"]["sensor_id"] = "STR_Heave";
-  sH["timestamp"] = timestamp;
-  String msg2;
-  serializeJson(sH, msg2);
-  BPwebSocket->sendTXT(msg2);
-
-  JsonDocument sR;
-  sR["type"] = "data";
-  sR["topic"] = "sensors/stroke_Roll_distanceMM";
-  sR["data"]["value"] = MechSensors->STR_Roll_mm;
-  sR["data"]["sensor_id"] = "STR_Roll";
-  sR["timestamp"] = timestamp;
-  String msg1;
-  serializeJson(sR, msg1);
-  BPwebSocket->sendTXT(msg1);
+  JsonDocument doc;
+  doc["type"] = "data";
+  doc["group"] = "front.mech";
+  doc["ts"] = timestamp;
+  doc["d"]["STR_Heave_mm"] = MechSensors->STR_Heave_mm;
+  doc["d"]["STR_Roll_mm"]  = MechSensors->STR_Roll_mm;
+  String msg;
+  serializeJson(doc, msg);
+  BPwebSocket->sendTXT(msg);
 }
 
 void publishElectData(Electrical* ElectSensors) {
   uint64_t timestamp = syncTime_calcRelative_ms(RTC_UNIX_TIME);
-
-  JsonDocument iSenseDoc;
-  iSenseDoc["type"] = "data";
-  iSenseDoc["topic"] = "electrical/current_sense";
-  iSenseDoc["data"]["value"] = ElectSensors->I_SENSE;
-  iSenseDoc["data"]["sensor_id"] = "I_SENSE";
-  iSenseDoc["timestamp"] = timestamp;
-  String iSenseMsg;
-  serializeJson(iSenseDoc, iSenseMsg);
-  BPwebSocket->sendTXT(iSenseMsg);
-
-  JsonDocument tmpDoc;
-  tmpDoc["type"] = "data";
-  tmpDoc["topic"] = "electrical/temperature";
-  tmpDoc["data"]["value"] = ElectSensors->TMP;
-  tmpDoc["data"]["sensor_id"] = "TMP";
-  tmpDoc["timestamp"] = timestamp;
-  String tmpMsg;
-  serializeJson(tmpDoc, tmpMsg);
-  BPwebSocket->sendTXT(tmpMsg);
-
-  JsonDocument appsDoc;
-  appsDoc["type"] = "data";
-  appsDoc["topic"] = "electrical/apps";
-  appsDoc["data"]["value"] = ElectSensors->APPS;
-  appsDoc["data"]["sensor_id"] = "APPS";
-  appsDoc["timestamp"] = timestamp;
-  String appsMsg;
-  serializeJson(appsDoc, appsMsg);
-  BPwebSocket->sendTXT(appsMsg);
-
-  JsonDocument bppsDoc;
-  bppsDoc["type"] = "data";
-  bppsDoc["topic"] = "electrical/bpps";
-  bppsDoc["data"]["value"] = ElectSensors->BPPS;
-  bppsDoc["data"]["sensor_id"] = "BPPS";
-  bppsDoc["timestamp"] = timestamp;
-  String bppsMsg;
-  serializeJson(bppsDoc, bppsMsg);
-  BPwebSocket->sendTXT(bppsMsg);
+  JsonDocument doc;
+  doc["type"] = "data";
+  doc["group"] = "front.elect";
+  doc["ts"] = timestamp;
+  doc["d"]["I_SENSE"] = ElectSensors->I_SENSE;
+  doc["d"]["TMP"]     = ElectSensors->TMP;
+  doc["d"]["APPS"]    = ElectSensors->APPS;
+  doc["d"]["BPPS"]    = ElectSensors->BPPS;
+  String msg;
+  serializeJson(doc, msg);
+  BPwebSocket->sendTXT(msg);
 }
 
 void publishElectFaultState(Electrical* ElectSensors) {
   uint64_t timestamp = syncTime_calcRelative_ms(RTC_UNIX_TIME);
-
-  JsonDocument amsDoc;
-  amsDoc["type"] = "data";
-  amsDoc["topic"] = "electrical/ams_ok";
-  amsDoc["data"]["value"] = ElectSensors->AMS_OK;
-  amsDoc["data"]["sensor_id"] = "AMS";
-  amsDoc["timestamp"] = timestamp;
-  String amsMsg;
-  serializeJson(amsDoc, amsMsg);
-  BPwebSocket->sendTXT(amsMsg);
-
-  JsonDocument imdDoc;
-  imdDoc["type"] = "data";
-  imdDoc["topic"] = "electrical/imd_ok";
-  imdDoc["data"]["value"] = ElectSensors->IMD_OK;
-  imdDoc["data"]["sensor_id"] = "IMD";
-  imdDoc["timestamp"] = timestamp;
-  String imdMsg;
-  serializeJson(imdDoc, imdMsg);
-  BPwebSocket->sendTXT(imdMsg);
-
-  JsonDocument hvDoc;
-  hvDoc["type"] = "data";
-  hvDoc["topic"] = "electrical/hv_on";
-  hvDoc["data"]["value"] = ElectSensors->HV_ON;
-  hvDoc["data"]["sensor_id"] = "HV";
-  hvDoc["timestamp"] = timestamp;
-  String hvMsg;
-  serializeJson(hvDoc, hvMsg);
-  BPwebSocket->sendTXT(hvMsg);
-
-  JsonDocument bspdDoc;
-  bspdDoc["type"] = "data";
-  bspdDoc["topic"] = "electrical/bspd_ok";
-  bspdDoc["data"]["value"] = ElectSensors->BSPD_OK;
-  bspdDoc["data"]["sensor_id"] = "BSPD";
-  bspdDoc["timestamp"] = timestamp;
-  String bspdMsg;
-  serializeJson(bspdDoc, bspdMsg);
-  BPwebSocket->sendTXT(bspdMsg);
+  JsonDocument doc;
+  doc["type"] = "data";
+  doc["group"] = "front.faults";
+  doc["ts"] = timestamp;
+  doc["d"]["AMS_OK"]  = (bool)ElectSensors->AMS_OK;
+  doc["d"]["IMD_OK"]  = (bool)ElectSensors->IMD_OK;
+  doc["d"]["HV_ON"]   = (bool)ElectSensors->HV_ON;
+  doc["d"]["BSPD_OK"] = (bool)ElectSensors->BSPD_OK;
+  String msg;
+  serializeJson(doc, msg);
+  BPwebSocket->sendTXT(msg);
+  Serial.println(msg);
 }
 
 void registerClient(const char* clientName) {
@@ -601,77 +533,34 @@ void registerClient(const char* clientName) {
   doc["type"] = "register";
   doc["client_name"] = clientName;
 
-  JsonArray topics = doc["topics"].to<JsonArray>();
-  topics.add("sensors/stroke_Heave_distanceMM");
-  topics.add("sensors/stroke_Roll_distanceMM");
-  topics.add("electrical/current_sense");
-  topics.add("electrical/temperature");
-  topics.add("electrical/apps");
-  topics.add("electrical/bpps");
-  topics.add("electrical/ams_ok");
-  topics.add("electrical/imd_ok");
-  topics.add("electrical/hv_on");
-  topics.add("electrical/bspd_ok");
+  // Groups
+  JsonArray groups = doc["groups"].to<JsonArray>();
+  JsonObject g1 = groups.add<JsonObject>(); g1["group"] = "front.mech";   g1["rate_hz"] = MECH_SENSORS_SAMPLING_RATE;
+  JsonObject g2 = groups.add<JsonObject>(); g2["group"] = "front.elect";  g2["rate_hz"] = ELECT_SENSORS_SAMPLING_RATE;
+  JsonObject g3 = groups.add<JsonObject>(); g3["group"] = "front.faults"; g3["rate_hz"] = ELECT_FAULT_STAT_SAMPLING_RATE;
 
-  JsonObject metadata = doc["topic_metadata"].to<JsonObject>();
+  // Schema
+  JsonArray schema = doc["schema"].to<JsonArray>();
 
-  JsonObject sHMeta = metadata["sensors/stroke_Heave_distanceMM"].to<JsonObject>();
-  sHMeta["description"] = "Stroke Heave";
-  sHMeta["unit"] = "mm";
-  sHMeta["sampling_rate"] = MECH_SENSORS_SAMPLING_RATE;
+  auto addEntry = [&](const char* key, const char* type, const char* unit, const char* group, float scale = 1, float offset = 0) {
+    JsonObject e = schema.add<JsonObject>();
+    e["key"] = key; e["type"] = type; e["unit"] = unit; e["scale"] = scale; e["offset"] = offset; e["group"] = group;
+  };
 
-  JsonObject sRMeta = metadata["sensors/stroke_Roll_distanceMM"].to<JsonObject>();
-  sRMeta["description"] = "Stroke Roll";
-  sRMeta["unit"] = "mm";
-  sRMeta["sampling_rate"] = MECH_SENSORS_SAMPLING_RATE;
-
-  JsonObject iSenseMeta = metadata["electrical/current_sense"].to<JsonObject>();
-  iSenseMeta["description"] = "Current sense";
-  iSenseMeta["unit"] = "A";
-  iSenseMeta["sampling_rate"] = ELECT_SENSORS_SAMPLING_RATE;
-
-  JsonObject tmpMeta = metadata["electrical/temperature"].to<JsonObject>();
-  tmpMeta["description"] = "Electrical system temperature";
-  tmpMeta["unit"] = "C";
-  tmpMeta["sampling_rate"] = ELECT_SENSORS_SAMPLING_RATE;
-
-  JsonObject appsMeta = metadata["electrical/apps"].to<JsonObject>();
-  appsMeta["description"] = "Accelerator Pedal Position Sensor";
-  appsMeta["unit"] = "%";
-  appsMeta["sampling_rate"] = ELECT_SENSORS_SAMPLING_RATE;
-
-  JsonObject bppsMeta = metadata["electrical/bpps"].to<JsonObject>();
-  bppsMeta["description"] = "Brake Pedal Position Sensor";
-  bppsMeta["unit"] = "%";
-  bppsMeta["sampling_rate"] = ELECT_SENSORS_SAMPLING_RATE;
-
-  JsonObject amsMeta = metadata["electrical/ams_ok"].to<JsonObject>();
-  amsMeta["description"] = "Accumulator Management System status";
-  amsMeta["unit"] = "bool";
-  amsMeta["sampling_rate"] = ELECT_FAULT_STAT_SAMPLING_RATE;
-
-  JsonObject imdMeta = metadata["electrical/imd_ok"].to<JsonObject>();
-  imdMeta["description"] = "Insulation Monitoring Device status";
-  imdMeta["unit"] = "bool";
-  imdMeta["sampling_rate"] = ELECT_FAULT_STAT_SAMPLING_RATE;
-
-  JsonObject hvMeta = metadata["electrical/hv_on"].to<JsonObject>();
-  hvMeta["description"] = "High Voltage system status";
-  hvMeta["unit"] = "bool";
-  hvMeta["sampling_rate"] = ELECT_FAULT_STAT_SAMPLING_RATE;
-
-  JsonObject bspdMeta = metadata["electrical/bspd_ok"].to<JsonObject>();
-  bspdMeta["description"] = "Brake System Plausibility Device status";
-  bspdMeta["unit"] = "bool";
-  bspdMeta["sampling_rate"] = ELECT_FAULT_STAT_SAMPLING_RATE;
+  addEntry("front.mech.STR_Heave_mm", "float", "mm", "front.mech");
+  addEntry("front.mech.STR_Roll_mm",  "float", "mm", "front.mech");
+  addEntry("front.elect.I_SENSE",     "float", "A",  "front.elect");
+  addEntry("front.elect.TMP",         "float", "C",  "front.elect");
+  addEntry("front.elect.APPS",        "float", "%",  "front.elect");
+  addEntry("front.elect.BPPS",        "float", "%",  "front.elect");
+  addEntry("front.faults.AMS_OK",     "bool",  "",   "front.faults");
+  addEntry("front.faults.IMD_OK",     "bool",  "",   "front.faults");
+  addEntry("front.faults.HV_ON",      "bool",  "",   "front.faults");
+  addEntry("front.faults.BSPD_OK",    "bool",  "",   "front.faults");
 
   String registration;
   serializeJson(doc, registration);
-
-  if (serialMutex && xSemaphoreTake(serialMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-    Serial.println("[WS] Sending registration...");
-    xSemaphoreGive(serialMutex);
-  }
+  Serial.println("[WS] Sending registration...");
   BPwebSocket->sendTXT(registration);
 }
 

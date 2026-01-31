@@ -490,91 +490,39 @@ void loop() {
 
 void publishMechData(Mechanical* MechSensors) {
   uint64_t timestamp = syncTime_calcRelative_ms(RTC_UNIX_TIME);
-
-  JsonDocument docL;
-  docL["type"] = "data";
-  docL["topic"] = "wheel/left_rpm";
-  docL["data"]["value"] = MechSensors->Wheel_RPM_L;
-  docL["data"]["sensor_id"] = "ENC_LEFT";
-  docL["timestamp"] = timestamp;
-  String msgL;
-  serializeJson(docL, msgL);
-  BPwebSocket->sendTXT(msgL);
-
-  JsonDocument docR;
-  docR["type"] = "data";
-  docR["topic"] = "wheel/right_rpm";
-  docR["data"]["value"] = MechSensors->Wheel_RPM_R;
-  docR["data"]["sensor_id"] = "ENC_RIGHT";
-  docR["timestamp"] = timestamp;
-  String msgR;
-  serializeJson(docR, msgR);
-  BPwebSocket->sendTXT(msgR);
-
-  JsonDocument sH;
-  sH["type"] = "data";
-  sH["topic"] = "sensors/stroke_Heave_distanceMM";
-  sH["data"]["value"] = MechSensors->STR_Heave_mm;
-  sH["data"]["sensor_id"] = "STR_Heave";
-  sH["timestamp"] = timestamp;
-  String msg2;
-  serializeJson(sH, msg2);
-  BPwebSocket->sendTXT(msg2);
-
-  JsonDocument sR;
-  sR["type"] = "data";
-  sR["topic"] = "sensors/stroke_Roll_distanceMM";
-  sR["data"]["value"] = MechSensors->STR_Roll_mm;
-  sR["data"]["sensor_id"] = "STR_Roll";
-  sR["timestamp"] = timestamp;
-  String msg1;
-  serializeJson(sR, msg1);
-  BPwebSocket->sendTXT(msg1);
+  JsonDocument doc;
+  doc["type"] = "data";
+  doc["group"] = "rear.mech";
+  doc["ts"] = timestamp;
+  doc["d"]["Wheel_RPM_L"]  = MechSensors->Wheel_RPM_L;
+  doc["d"]["Wheel_RPM_R"]  = MechSensors->Wheel_RPM_R;
+  doc["d"]["STR_Heave_mm"] = MechSensors->STR_Heave_mm;
+  doc["d"]["STR_Roll_mm"]  = MechSensors->STR_Roll_mm;
+  String msg;
+  serializeJson(doc, msg);
+  BPwebSocket->sendTXT(msg);
 }
 
 void publishOdometryData(Odometry* OdomSensors) {
   uint64_t timestamp = syncTime_calcRelative_ms(RTC_UNIX_TIME);
-
-  // GPS Data
-  JsonDocument gpsDoc;
-  gpsDoc["type"] = "data";
-  gpsDoc["topic"] = "odometry/gps";
-  gpsDoc["data"]["lat"] = OdomSensors->gps_lat;
-  gpsDoc["data"]["lng"] = OdomSensors->gps_lng;
-  gpsDoc["data"]["age"] = OdomSensors->gps_age;
-  gpsDoc["data"]["course"] = OdomSensors->gps_course;
-  gpsDoc["data"]["speed"] = OdomSensors->gps_speed;
-  gpsDoc["data"]["sensor_id"] = "GPS_AN251";
-  gpsDoc["timestamp"] = timestamp;
-  String gpsMsg;
-  serializeJson(gpsDoc, gpsMsg);
-  BPwebSocket->sendTXT(gpsMsg);
-
-  // IMU Accelerometer Data
-  JsonDocument accelDoc;
-  accelDoc["type"] = "data";
-  accelDoc["topic"] = "odometry/imu_accel";
-  accelDoc["data"]["x"] = OdomSensors->imu_accelx;
-  accelDoc["data"]["y"] = OdomSensors->imu_accely;
-  accelDoc["data"]["z"] = OdomSensors->imu_accelz;
-  accelDoc["data"]["sensor_id"] = "MPU6050";
-  accelDoc["timestamp"] = timestamp;
-  String accelMsg;
-  serializeJson(accelDoc, accelMsg);
-  BPwebSocket->sendTXT(accelMsg);
-
-  // IMU Gyroscope Data
-  JsonDocument gyroDoc;
-  gyroDoc["type"] = "data";
-  gyroDoc["topic"] = "odometry/imu_gyro";
-  gyroDoc["data"]["x"] = OdomSensors->imu_gyrox;
-  gyroDoc["data"]["y"] = OdomSensors->imu_gyroy;
-  gyroDoc["data"]["z"] = OdomSensors->imu_gyroz;
-  gyroDoc["data"]["sensor_id"] = "MPU6050";
-  gyroDoc["timestamp"] = timestamp;
-  String gyroMsg;
-  serializeJson(gyroDoc, gyroMsg);
-  BPwebSocket->sendTXT(gyroMsg);
+  JsonDocument doc;
+  doc["type"] = "data";
+  doc["group"] = "rear.odom";
+  doc["ts"] = timestamp;
+  doc["d"]["gps_lat"]     = OdomSensors->gps_lat;
+  doc["d"]["gps_lng"]     = OdomSensors->gps_lng;
+  doc["d"]["gps_age"]     = OdomSensors->gps_age;
+  doc["d"]["gps_course"]  = OdomSensors->gps_course;
+  doc["d"]["gps_speed"]   = OdomSensors->gps_speed;
+  doc["d"]["imu_accel_x"] = OdomSensors->imu_accelx;
+  doc["d"]["imu_accel_y"] = OdomSensors->imu_accely;
+  doc["d"]["imu_accel_z"] = OdomSensors->imu_accelz;
+  doc["d"]["imu_gyro_x"]  = OdomSensors->imu_gyrox;
+  doc["d"]["imu_gyro_y"]  = OdomSensors->imu_gyroy;
+  doc["d"]["imu_gyro_z"]  = OdomSensors->imu_gyroz;
+  String msg;
+  serializeJson(doc, msg);
+  BPwebSocket->sendTXT(msg);
 }
 
 void registerClient(const char* clientName) {
@@ -582,59 +530,38 @@ void registerClient(const char* clientName) {
   doc["type"] = "register";
   doc["client_name"] = clientName;
 
-  JsonArray topics = doc["topics"].to<JsonArray>();
-  topics.add("wheel/left_rpm");
-  topics.add("wheel/right_rpm");
-  topics.add("sensors/stroke_Heave_distanceMM");
-  topics.add("sensors/stroke_Roll_distanceMM");
-  topics.add("odometry/gps");
-  topics.add("odometry/imu_accel");
-  topics.add("odometry/imu_gyro");
+  // Groups
+  JsonArray groups = doc["groups"].to<JsonArray>();
+  JsonObject g1 = groups.add<JsonObject>(); g1["group"] = "rear.mech"; g1["rate_hz"] = MECH_SENSORS_SAMPLING_RATE;
+  JsonObject g2 = groups.add<JsonObject>(); g2["group"] = "rear.odom"; g2["rate_hz"] = ODOM_SENSORS_SAMPLING_RATE;
 
-  JsonObject metadata = doc["topic_metadata"].to<JsonObject>();
+  // Schema
+  JsonArray schema = doc["schema"].to<JsonArray>();
 
-  JsonObject leftRpmMeta = metadata["wheel/left_rpm"].to<JsonObject>();
-  leftRpmMeta["description"] = "Left wheel speed";
-  leftRpmMeta["unit"] = "RPM";
-  leftRpmMeta["sampling_rate"] = MECH_SENSORS_SAMPLING_RATE;
+  auto addEntry = [&](const char* key, const char* type, const char* unit, const char* group, float scale = 1, float offset = 0) {
+    JsonObject e = schema.add<JsonObject>();
+    e["key"] = key; e["type"] = type; e["unit"] = unit; e["scale"] = scale; e["offset"] = offset; e["group"] = group;
+  };
 
-  JsonObject rightRpmMeta = metadata["wheel/right_rpm"].to<JsonObject>();
-  rightRpmMeta["description"] = "Right wheel speed";
-  rightRpmMeta["unit"] = "RPM";
-  rightRpmMeta["sampling_rate"] = MECH_SENSORS_SAMPLING_RATE;
-
-  JsonObject sHMeta = metadata["sensors/stroke_Heave_distanceMM"].to<JsonObject>();
-  sHMeta["description"] = "Stroke Heave";
-  sHMeta["unit"] = "mm";
-  sHMeta["sampling_rate"] = MECH_SENSORS_SAMPLING_RATE;
-
-  JsonObject sRMeta = metadata["sensors/stroke_Roll_distanceMM"].to<JsonObject>();
-  sRMeta["description"] = "Stroke Roll";
-  sRMeta["unit"] = "mm";
-  sRMeta["sampling_rate"] = MECH_SENSORS_SAMPLING_RATE;
-
-  JsonObject gpsMeta = metadata["odometry/gps"].to<JsonObject>();
-  gpsMeta["description"] = "GPS position and motion data";
-  gpsMeta["unit"] = "mixed";
-  gpsMeta["sampling_rate"] = ODOM_SENSORS_SAMPLING_RATE;
-
-  JsonObject accelMeta = metadata["odometry/imu_accel"].to<JsonObject>();
-  accelMeta["description"] = "IMU accelerometer (X, Y, Z)";
-  accelMeta["unit"] = "m/s^2";
-  accelMeta["sampling_rate"] = ODOM_SENSORS_SAMPLING_RATE;
-
-  JsonObject gyroMeta = metadata["odometry/imu_gyro"].to<JsonObject>();
-  gyroMeta["description"] = "IMU gyroscope (X, Y, Z)";
-  gyroMeta["unit"] = "deg/s";
-  gyroMeta["sampling_rate"] = ODOM_SENSORS_SAMPLING_RATE;
+  addEntry("rear.mech.Wheel_RPM_L",  "float",  "RPM",   "rear.mech");
+  addEntry("rear.mech.Wheel_RPM_R",  "float",  "RPM",   "rear.mech");
+  addEntry("rear.mech.STR_Heave_mm", "float",  "mm",    "rear.mech");
+  addEntry("rear.mech.STR_Roll_mm",  "float",  "mm",    "rear.mech");
+  addEntry("rear.odom.gps_lat",      "double", "deg",   "rear.odom");
+  addEntry("rear.odom.gps_lng",      "double", "deg",   "rear.odom");
+  addEntry("rear.odom.gps_age",      "double", "ms",    "rear.odom");
+  addEntry("rear.odom.gps_course",   "double", "deg",   "rear.odom");
+  addEntry("rear.odom.gps_speed",    "double", "km/h",  "rear.odom");
+  addEntry("rear.odom.imu_accel_x",  "float",  "m/s2",  "rear.odom");
+  addEntry("rear.odom.imu_accel_y",  "float",  "m/s2",  "rear.odom");
+  addEntry("rear.odom.imu_accel_z",  "float",  "m/s2",  "rear.odom");
+  addEntry("rear.odom.imu_gyro_x",   "float",  "deg/s", "rear.odom");
+  addEntry("rear.odom.imu_gyro_y",   "float",  "deg/s", "rear.odom");
+  addEntry("rear.odom.imu_gyro_z",   "float",  "deg/s", "rear.odom");
 
   String registration;
   serializeJson(doc, registration);
-
-  if (serialMutex && xSemaphoreTake(serialMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-    Serial.println("[WS] Sending registration...");
-    xSemaphoreGive(serialMutex);
-  }
+  Serial.println("[WS] Sending registration...");
   BPwebSocket->sendTXT(registration);
 }
 

@@ -460,37 +460,15 @@ void loop() {
 
 void publishBAMOpower(BAMOCar* bamocar) {
   uint64_t timestamp = syncTime_calcRelative_ms(RTC_UNIX_TIME);
-
-  if (bamocar->canVoltageValid) {
-    JsonDocument doc;
-    doc["type"] = "data";
-    doc["topic"] = "power/can_voltage";
-    doc["data"]["value"] = bamocar->canVoltage;
-    doc["data"]["sensor_id"] = "BAMOCAR_CAN";
-    doc["timestamp"] = timestamp;
-    String msg;
-    serializeJson(doc, msg);
-    BPwebSocket->sendTXT(msg);
-  }
-
-  if (bamocar->canCurrentValid) {
-    JsonDocument doc;
-    doc["type"] = "data";
-    doc["topic"] = "power/can_current";
-    doc["data"]["value"] = bamocar->canCurrent;
-    doc["data"]["sensor_id"] = "BAMOCAR_CAN";
-    doc["timestamp"] = timestamp;
-    String msg;
-    serializeJson(doc, msg);
-    BPwebSocket->sendTXT(msg);
-  }
-
   JsonDocument doc;
   doc["type"] = "data";
-  doc["topic"] = "power/power";
-  doc["data"]["value"] = bamocar->power;
-  doc["data"]["sensor_id"] = "CALCULATED";
-  doc["timestamp"] = timestamp;
+  doc["group"] = "bamo.power";
+  doc["ts"] = timestamp;
+  doc["d"]["canVoltage"]      = bamocar->canVoltage;
+  doc["d"]["canCurrent"]      = bamocar->canCurrent;
+  doc["d"]["power"]           = bamocar->power;
+  doc["d"]["canVoltageValid"] = bamocar->canVoltageValid;
+  doc["d"]["canCurrentValid"] = bamocar->canCurrentValid;
   String msg;
   serializeJson(doc, msg);
   BPwebSocket->sendTXT(msg);
@@ -498,30 +476,17 @@ void publishBAMOpower(BAMOCar* bamocar) {
 
 void publishBAMOtemp(BAMOCar* bamocar) {
   uint64_t timestamp = syncTime_calcRelative_ms(RTC_UNIX_TIME);
-
-  if (bamocar->motorTempValid) {
-    JsonDocument doc;
-    doc["type"] = "data";
-    doc["topic"] = "motor/temperature";
-    doc["data"]["value"] = bamocar->motorTemp2;
-    doc["data"]["sensor_id"] = "BAMOCAR_MOTOR";
-    doc["timestamp"] = timestamp;
-    String msg;
-    serializeJson(doc, msg);
-    BPwebSocket->sendTXT(msg);
-  }
-
-  if (bamocar->controllerTempValid) {
-    JsonDocument doc;
-    doc["type"] = "data";
-    doc["topic"] = "motor/controller_temperature";
-    doc["data"]["value"] = bamocar->controllerTemp;
-    doc["data"]["sensor_id"] = "BAMOCAR_CTRL";
-    doc["timestamp"] = timestamp;
-    String msg;
-    serializeJson(doc, msg);
-    BPwebSocket->sendTXT(msg);
-  }
+  JsonDocument doc;
+  doc["type"] = "data";
+  doc["group"] = "bamo.temp";
+  doc["ts"] = timestamp;
+  doc["d"]["motorTemp"]      = bamocar->motorTemp2;
+  doc["d"]["controllerTemp"] = bamocar->controllerTemp;
+  doc["d"]["motorTempValid"] = bamocar->motorTempValid;
+  doc["d"]["ctrlTempValid"]  = bamocar->controllerTempValid;
+  String msg;
+  serializeJson(doc, msg);
+  BPwebSocket->sendTXT(msg);
 }
 
 void registerClient(const char* clientName) {
@@ -529,47 +494,32 @@ void registerClient(const char* clientName) {
   doc["type"] = "register";
   doc["client_name"] = clientName;
 
-  JsonArray topics = doc["topics"].to<JsonArray>();
-  topics.add("power/can_voltage");
-  topics.add("power/can_current");
-  topics.add("power/power");
-  topics.add("motor/temperature");
-  topics.add("motor/controller_temperature");
+  // Groups
+  JsonArray groups = doc["groups"].to<JsonArray>();
+  JsonObject g1 = groups.add<JsonObject>(); g1["group"] = "bamo.power"; g1["rate_hz"] = BAMO_POWER_SAMPLING_RATE;
+  JsonObject g2 = groups.add<JsonObject>(); g2["group"] = "bamo.temp";  g2["rate_hz"] = BAMO_TEMP_SAMPLING_RATE;
 
-  JsonObject metadata = doc["topic_metadata"].to<JsonObject>();
+  // Schema
+  JsonArray schema = doc["schema"].to<JsonArray>();
 
-  JsonObject canVoltMeta = metadata["power/can_voltage"].to<JsonObject>();
-  canVoltMeta["description"] = "DC Link Voltage (Bamocar CAN)";
-  canVoltMeta["unit"] = "V";
-  canVoltMeta["sampling_rate"] = BAMO_POWER_SAMPLING_RATE;
+  auto addEntry = [&](const char* key, const char* type, const char* unit, const char* group, float scale = 1, float offset = 0) {
+    JsonObject e = schema.add<JsonObject>();
+    e["key"] = key; e["type"] = type; e["unit"] = unit; e["scale"] = scale; e["offset"] = offset; e["group"] = group;
+  };
 
-  JsonObject canCurrMeta = metadata["power/can_current"].to<JsonObject>();
-  canCurrMeta["description"] = "Motor DC Current (Bamocar CAN)";
-  canCurrMeta["unit"] = "A";
-  canCurrMeta["sampling_rate"] = BAMO_POWER_SAMPLING_RATE;
-
-  JsonObject powMeta = metadata["power/power"].to<JsonObject>();
-  powMeta["description"] = "Power consumption (calculated)";
-  powMeta["unit"] = "W";
-  powMeta["sampling_rate"] = BAMO_POWER_SAMPLING_RATE;
-
-  JsonObject motorTempMeta = metadata["motor/temperature"].to<JsonObject>();
-  motorTempMeta["description"] = "Motor temperature (Bamocar)";
-  motorTempMeta["unit"] = "C";
-  motorTempMeta["sampling_rate"] = BAMO_TEMP_SAMPLING_RATE;
-
-  JsonObject ctrlTempMeta = metadata["motor/controller_temperature"].to<JsonObject>();
-  ctrlTempMeta["description"] = "Motor controller/IGBT temperature (Bamocar)";
-  ctrlTempMeta["unit"] = "C";
-  ctrlTempMeta["sampling_rate"] = BAMO_TEMP_SAMPLING_RATE;
+  addEntry("bamo.power.canVoltage",      "float", "V", "bamo.power");
+  addEntry("bamo.power.canCurrent",      "float", "A", "bamo.power");
+  addEntry("bamo.power.power",           "float", "W", "bamo.power");
+  addEntry("bamo.power.canVoltageValid", "bool",  "",  "bamo.power");
+  addEntry("bamo.power.canCurrentValid", "bool",  "",  "bamo.power");
+  addEntry("bamo.temp.motorTemp",        "float", "C", "bamo.temp");
+  addEntry("bamo.temp.controllerTemp",   "float", "C", "bamo.temp");
+  addEntry("bamo.temp.motorTempValid",   "bool",  "",  "bamo.temp");
+  addEntry("bamo.temp.ctrlTempValid",    "bool",  "",  "bamo.temp");
 
   String registration;
   serializeJson(doc, registration);
-
-  if (serialMutex && xSemaphoreTake(serialMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-    Serial.println("[WS] Sending registration...");
-    xSemaphoreGive(serialMutex);
-  }
+  Serial.println("[WS] Sending registration...");
   BPwebSocket->sendTXT(registration);
 }
 

@@ -552,75 +552,93 @@ void registerClient(const char* name) {
   doc["type"] = "register";
   doc["client_name"] = name;
 
-  // Define topics for BMS data
-  JsonArray topics = doc["topics"].to<JsonArray>();
-
-  // BMU cell topics (one per module)
+  // Groups: one cells + one faults group per BMU module
+  JsonArray groups = doc["groups"].to<JsonArray>();
   for (int i = 0; i < MODULE_NUM; i++) {
-    char topic[32];
-    snprintf(topic, sizeof(topic), "bms/bmu%d/cells", i);
-    topics.add(topic);
-    snprintf(topic, sizeof(topic), "bms/bmu%d/faults", i);
-    topics.add(topic);
+    char buf[24];
+    JsonObject gc = groups.add<JsonObject>();
+    snprintf(buf, sizeof(buf), "bmu%d.cells", i);
+    gc["group"] = (const char*)buf; gc["rate_hz"] = BMU_CELLS_SAMPLING_RATE;
+
+    JsonObject gf = groups.add<JsonObject>();
+    snprintf(buf, sizeof(buf), "bmu%d.faults", i);
+    gf["group"] = (const char*)buf; gf["rate_hz"] = BMU_FAULT_SAMPLING_RATE;
   }
 
-  // Define topic metadata
-  JsonObject metadata = doc["topic_metadata"].to<JsonObject>();
+  // Schema
+  JsonArray schema = doc["schema"].to<JsonArray>();
+  char key[48], grp[24];
 
   for (int i = 0; i < MODULE_NUM; i++) {
-    char topic[32];
-    snprintf(topic, sizeof(topic), "bms/bmu%d/cells", i);
-    JsonObject cellMeta = metadata[topic].to<JsonObject>();
-    cellMeta["description"] = "BMU cell voltages";
-    cellMeta["unit"] = "V";
-    cellMeta["sampling_rate"] = BMU_CELLS_SAMPLING_RATE;
+    snprintf(grp, sizeof(grp), "bmu%d.cells", i);
 
-    snprintf(topic, sizeof(topic), "bms/bmu%d/faults", i);
-    JsonObject faultMeta = metadata[topic].to<JsonObject>();
-    faultMeta["description"] = "BMU fault flags";
-    faultMeta["unit"] = "flags";
-    faultMeta["sampling_rate"] = BMU_FAULT_SAMPLING_RATE;
+    auto addCell = [&](const char* field, const char* type, const char* unit, float scale, float offset = 0, int length = 0) {
+      JsonObject e = schema.add<JsonObject>();
+      snprintf(key, sizeof(key), "%s.%s", grp, field);
+      e["key"] = (const char*)key; e["type"] = type; e["unit"] = unit;
+      e["scale"] = scale; e["offset"] = offset; e["group"] = (const char*)grp;
+      if (length > 0) e["length"] = length;
+    };
+
+    addCell("V_MODULE",   "uint16",   "V", 0.02);
+    addCell("V_CELL",     "uint8[]",  "V", 0.02, 0, CELL_NUM);
+    addCell("TEMP_SENSE", "uint16[]", "C", 0.5, -40, TEMP_SENSOR_NUM);
+    addCell("DV",         "uint8",    "V", 0.1);
+    addCell("connected",  "bool",     "",  1);
+
+    snprintf(grp, sizeof(grp), "bmu%d.faults", i);
+
+    auto addFault = [&](const char* field, const char* type, const char* unit) {
+      JsonObject e = schema.add<JsonObject>();
+      snprintf(key, sizeof(key), "%s.%s", grp, field);
+      e["key"] = (const char*)key; e["type"] = type; e["unit"] = unit;
+      e["scale"] = 1; e["offset"] = 0; e["group"] = (const char*)grp;
+    };
+
+    addFault("OV_WARN",   "uint16", "flags");
+    addFault("OV_CRIT",   "uint16", "flags");
+    addFault("LV_WARN",   "uint16", "flags");
+    addFault("LV_CRIT",   "uint16", "flags");
+    addFault("OT_WARN",   "uint16", "flags");
+    addFault("OT_CRIT",   "uint16", "flags");
+    addFault("ODV_WARN",  "uint16", "flags");
+    addFault("ODV_CRIT",  "uint16", "flags");
+    addFault("BAL_CELLS", "uint16", "flags");
+    addFault("NEED_BAL",  "bool",   "");
   }
 
   String registration;
   serializeJson(doc, registration);
-
-  if (serialMutex && xSemaphoreTake(serialMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-    Serial.println("[WebSocket] Sending registration...");
-    xSemaphoreGive(serialMutex);
-  }
+  Serial.println("[WS] Sending registration...");
   BPwebSocket->sendTXT(registration);
 }
 
 void publishBMUcells(BMUdata* bmu, int moduleNum) {
-  uint64_t timestamp = WiFi32_getNTPTime();
-  if (timestamp == 0) timestamp = millis();
+  uint64_t timestamp = syncTime_calcRelative_ms(RTC_UNIX_TIME);
 
   JsonDocument doc;
   doc["type"] = "data";
 
-  char topic[32];
-  snprintf(topic, sizeof(topic), "bms/bmu%d/cells", moduleNum);
-  doc["topic"] = topic;
+  char groupBuf[24];
+  snprintf(groupBuf, sizeof(groupBuf), "bmu%d.cells", moduleNum);
+  doc["group"] = groupBuf;
+  doc["ts"] = timestamp;
 
-  JsonObject data = doc["data"].to<JsonObject>();
-  data["module"] = moduleNum;
-  data["v_module"] = bmu->V_MODULE * 0.02f;  // Scaled to actual volts
+  JsonObject d = doc["d"].to<JsonObject>();
+  d["V_MODULE"] = bmu->V_MODULE;
 
-  JsonArray cells = data["cells"].to<JsonArray>();
+  JsonArray cells = d["V_CELL"].to<JsonArray>();
   for (int i = 0; i < CELL_NUM; i++) {
-    cells.add(bmu->V_CELL[i] * 0.02f);  // Scaled to actual volts
+    cells.add(bmu->V_CELL[i]);
   }
 
-  JsonArray temps = data["temps"].to<JsonArray>();
+  JsonArray temps = d["TEMP_SENSE"].to<JsonArray>();
   for (int i = 0; i < TEMP_SENSOR_NUM; i++) {
-    temps.add((bmu->TEMP_SENSE[i] * 0.5f) - 40.0f);  // Decoded to Celsius
+    temps.add(bmu->TEMP_SENSE[i]);
   }
 
-  data["dv"] = bmu->DV * 0.1f;  // Scaled to actual volts
-  data["connected"] = bmu->BMUconnected;
-
-  doc["timestamp"] = timestamp;
+  d["DV"] = bmu->DV;
+  d["connected"] = bmu->BMUconnected;
 
   String msg;
   serializeJson(doc, msg);
@@ -628,30 +646,27 @@ void publishBMUcells(BMUdata* bmu, int moduleNum) {
 }
 
 void publishBMUfaults(BMUdata* bmu, int moduleNum) {
-  uint64_t timestamp = WiFi32_getNTPTime();
-  if (timestamp == 0) timestamp = millis();
+  uint64_t timestamp = syncTime_calcRelative_ms(RTC_UNIX_TIME);
 
   JsonDocument doc;
   doc["type"] = "data";
 
-  char topic[32];
-  snprintf(topic, sizeof(topic), "bms/bmu%d/faults", moduleNum);
-  doc["topic"] = topic;
+  char groupBuf[24];
+  snprintf(groupBuf, sizeof(groupBuf), "bmu%d.faults", moduleNum);
+  doc["group"] = groupBuf;
+  doc["ts"] = timestamp;
 
-  JsonObject data = doc["data"].to<JsonObject>();
-  data["module"] = moduleNum;
-  data["ov_warn"] = bmu->OVERVOLTAGE_WARNING;
-  data["ov_crit"] = bmu->OVERVOLTAGE_CRITICAL;
-  data["lv_warn"] = bmu->LOWVOLTAGE_WARNING;
-  data["lv_crit"] = bmu->LOWVOLTAGE_CRITICAL;
-  data["ot_warn"] = bmu->OVERTEMP_WARNING;
-  data["ot_crit"] = bmu->OVERTEMP_CRITICAL;
-  data["odv_warn"] = bmu->OVERDIV_VOLTAGE_WARNING;
-  data["odv_crit"] = bmu->OVERDIV_VOLTAGE_CRITICAL;
-  data["BalancingCells"] = bmu->BalancingDischarge_Cells;
-  data["NeedBalancing"] = bmu->BMUneedBalance;
-
-  doc["timestamp"] = timestamp;
+  JsonObject d = doc["d"].to<JsonObject>();
+  d["OV_WARN"]   = bmu->OVERVOLTAGE_WARNING;
+  d["OV_CRIT"]   = bmu->OVERVOLTAGE_CRITICAL;
+  d["LV_WARN"]   = bmu->LOWVOLTAGE_WARNING;
+  d["LV_CRIT"]   = bmu->LOWVOLTAGE_CRITICAL;
+  d["OT_WARN"]   = bmu->OVERTEMP_WARNING;
+  d["OT_CRIT"]   = bmu->OVERTEMP_CRITICAL;
+  d["ODV_WARN"]  = bmu->OVERDIV_VOLTAGE_WARNING;
+  d["ODV_CRIT"]  = bmu->OVERDIV_VOLTAGE_CRITICAL;
+  d["BAL_CELLS"] = bmu->BalancingDischarge_Cells;
+  d["NEED_BAL"]  = bmu->BMUneedBalance;
 
   String msg;
   serializeJson(doc, msg);
