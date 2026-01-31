@@ -68,7 +68,9 @@ void SD32_generateUniqueFilename(int &sessionNumber, char* csvFilename, const ch
   if (root) {
     File entry = root.openNextFile();
     while (entry) {
+      // entry.name() returns full path (e.g. "/Front_001.csv"), strip leading '/'
       String filename = entry.name();
+      if (filename.startsWith("/")) filename = filename.substring(1);
       if (filename.startsWith(searchPrefix) && filename.endsWith(".csv")) {
         int endIdx = filename.indexOf(".csv");
         if (endIdx > prefixLen) {
@@ -108,7 +110,9 @@ void SD32_createSessionDir(int &sessionNumber, char* sessionDirPath, const char*
     File entry = root.openNextFile();
     while (entry) {
       if (entry.isDirectory()) {
+        // entry.name() returns full path (e.g. "/Front_session_000"), strip leading '/'
         String dirname = entry.name();
+        if (dirname.startsWith("/")) dirname = dirname.substring(1);
         if (dirname.startsWith(searchPattern)) {
           int num = dirname.substring(patternLen).toInt();
           if (num >= sessionNumber) {

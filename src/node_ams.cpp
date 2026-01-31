@@ -18,6 +18,7 @@
 #include <WebSocketsClient.h>
 #include <ArduinoJson.h>
 #include <RTClib.h>
+#include <sys/time.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -115,9 +116,10 @@ void flushAllFiles();
 
 /************************* Build Flags ***************************/
 
-#define MOCK_DATA 0
+#define MOCK_DATA 1
 #define calibrate_RTC 0
 #define DEBUG_MODE 0  // 0 = Disabled, 1 = Regular Serial, 2 = Teleplot
+#define TIME_SRC 0 // 0 = RTC , 1 = WiFI NTP Pool
 
 /************************* FreeRTOS ***************************/
 
@@ -261,7 +263,11 @@ void timeSyncTask(void* parameter) {
 
     // Local RTC poll every 1s
     if (SESSION_TIME - lastLocalSync >= LOCAL_SYNC_INTERVAL) {
+      #if TIME_SRC == 0
       uint64_t t = (uint64_t)RTC_getUnix(rtc, RTCavailable) * 1000ULL;
+      #elif TIME_SRC == 1
+      uint64_t t = WiFi32_getNTPTime();
+      #endif
       if (t > 0) syncTime_setSyncPoint(RTC_UNIX_TIME, t);
       lastLocalSync = SESSION_TIME;
     }
@@ -320,6 +326,12 @@ void setup() {
 
   // RTC Init
   RTCavailable = RTCinit(rtc,&Wire1);
+  // Sync ESP32 internal clock from DS3231 so FAT file timestamps are correct
+  if (RTCavailable) {
+    struct timeval tv = { .tv_sec = (time_t)rtc.now().unixtime(), .tv_usec = 0 };
+    settimeofday(&tv, NULL);
+    Serial.println("[RTC] ESP32 system clock set from DS3231");
+  }
 
   // CAN Bus Init
   canBusReady = CAN32_initCANBus(CAN_TX_PIN, CAN_RX_PIN,
@@ -332,7 +344,7 @@ void setup() {
     ntpready = WiFi32_initNTP();
     BPMobile.setClientName(clientName);
     BPMobile.setRegisterCallback(registerClient);
-    BPMobile.initWebSocket(serverHost, serverPort, clientName);
+    BPMobile.initWebSocketSSL(serverHost, serverPort, clientName);
   }
 
   // SD Card Init
