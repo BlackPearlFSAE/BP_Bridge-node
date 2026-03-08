@@ -19,6 +19,7 @@ typedef struct{
   bool IMD_OK =0;
   bool HV_ON =0; // Except this one 24V
   bool BSPD_OK =0; // And this one 5V
+  float steering = 0.0;
 } Electrical;
 
 // -- ADC config
@@ -35,9 +36,12 @@ const float max_volt24 =  24.0;  // Fixed: was 5.0, should be 24.0
 
 // Potentiometer stroke sensors (APPS/BPPS) - voltage maps linearly to distance
 const float apps_max_dist_mm =  75.00;  // Full stroke distance
-const float bpps_max_dist_mm =  75.00;  // Full stroke distance
 const float apps_offset_mm = 0.0;       // Mechanical installation offset
+const float bpps_max_dist_mm =  75.00;  // Full stroke distance
 const float bpps_offset_mm = 0.0;       // Mechanical installation offset
+const float steering_max__angle = 180.00 ;  // Full stroke distance
+const float steering_offset_angle =  0.00;  // Full stroke distance
+
 
 // Temperature sensor (NTC thermistor in voltage divider)
 const uint16_t tmp_series_res = 10000;  // 10k ohm series resistor

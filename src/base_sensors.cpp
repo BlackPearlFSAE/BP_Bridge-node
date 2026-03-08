@@ -56,10 +56,11 @@ void StrokesensorUpdate(Mechanical *MechSensors,int Heave,int Roll){
   // ----- Stroke distances
   // Conversion from ADC value back to its sensor reading voltage
   // Conversion of sensor reading voltage KPM18-50mm distance, total distance is 52.91 mm
+  // Discard first read on each channel to flush ESP32 ADC S/H capacitor crosstalk
+  analogRead(Heave);
   MechSensors->STR_Heave_mm = (float)(analogRead(Heave) * (max_distance1 / pwmres));
+  analogRead(Roll);
   MechSensors->STR_Roll_mm = (float)(analogRead(Roll) * (max_distance2 / pwmres));
-  // Serial.printf("GOT STROKE Heave: %3f mm\n",analogRead(Heave)*(max_distance1/(float)(pwmres)));
-  // Serial.printf("GOT STROKE Roll: %3f mm\n",analogRead(Roll)*(max_distance1/(float)(pwmres)));
 }
 
 
@@ -74,7 +75,7 @@ void ElectSensorsInit(int* pinArrays){
   pinMode(pinArrays[5],INPUT_PULLDOWN);
   pinMode(pinArrays[6],INPUT_PULLDOWN);
   pinMode(pinArrays[7],INPUT_PULLDOWN);
-  return;
+  pinMode(pinArrays[8],INPUT_PULLDOWN);
 }
 
 void ElectSensorsUpdate(Electrical *ElectSensors, int* pinArrays){
@@ -83,13 +84,14 @@ void ElectSensorsUpdate(Electrical *ElectSensors, int* pinArrays){
   uint16_t raw_tmp = analogRead(pinArrays[1]);
   uint16_t raw_apps = analogRead(pinArrays[2]);
   uint16_t raw_bpps = analogRead(pinArrays[3]);
+  uint16_t raw_steering = analogRead(pinArrays[8]);
 
   // Convert ADC to voltage (0-3.3V mapped to 0-4095)
   float volt_i_sense = (raw_i_sense / (float)pwmres) * aref;
   float volt_tmp = (raw_tmp / (float)pwmres) * aref;
   float volt_apps = (raw_apps / (float)pwmres) * aref;
   float volt_bpps = (raw_bpps / (float)pwmres) * aref;
-
+  float volt_steering = (raw_steering / (float)pwmres) * aref;
   // --- Hall Effect Current Sensor ---
   // Formula: I = (V_sensor - V_offset) / Sensitivity
   ElectSensors->I_SENSE = (volt_i_sense - i_sense_offset) / i_sense_sensitivity;
@@ -112,6 +114,7 @@ void ElectSensorsUpdate(Electrical *ElectSensors, int* pinArrays){
   // --- BPPS (Brake Position) - Linear potentiometer ---
   // Voltage maps linearly to distance (0V = 0mm, 3.3V = 75mm)
   ElectSensors->BPPS = (volt_bpps / aref) * bpps_max_dist_mm + bpps_offset_mm;
+  ElectSensors->steering = (volt_steering / aref) * steering_max__angle + steering_offset_angle;
 
   // --- Digital Fault Status Signals ---
   ElectSensors->AMS_OK = digitalRead(pinArrays[4]);
@@ -149,6 +152,7 @@ void mockElectricalData(Electrical *ElectSensors) {
   ElectSensors->IMD_OK = random(0, 10) > 1;    // 90% OK
   ElectSensors->HV_ON = random(0, 10) > 2;     // 80% ON
   ElectSensors->BSPD_OK = random(0, 10) > 1;   // 90% OK
+  ElectSensors->steering = random(0, 10) > 1;   // 90% OK
 }
 
 // --- TELEPLOT DEBUG FUNCTIONS ---
@@ -168,4 +172,5 @@ void teleplotElectrical(Electrical *ElectSensors) {
   Serial.printf(">IMD_OK:%d\n", ElectSensors->IMD_OK ? 1 : 0);
   Serial.printf(">HV_ON:%d\n", ElectSensors->HV_ON ? 1 : 0);
   Serial.printf(">BSPD_OK:%d\n", ElectSensors->BSPD_OK ? 1 : 0);
+  Serial.printf(">STEERING:%.2f\n", ElectSensors->steering);
 }

@@ -266,9 +266,10 @@ void canTask(void* parameter) {
         case 2: pack_RequestBamocarMsg(&txmsg, BAMOCAR_REG_DC_VOLTAGE); break;
         case 3: pack_RequestBamocarMsg(&txmsg, BAMOCAR_REG_DC_CURRENT); break;
       }
-      CAN32_sendCAN(&txmsg);
-      Serial.printf("[CAN TX] ID=0x%03X REG=0x%02X (seq=%d)\n",
-        txmsg.identifier, txmsg.data[0], requestSeq);
+      int txResult = CAN32_sendCAN(&txmsg);
+      Serial.printf("[CAN TX] ID=0x%03X REG=0x%02X (seq=%d) status=%s\n",
+        txmsg.identifier, txmsg.data[1], requestSeq,
+        txResult == ESP_OK ? "OK" : "FAIL");
       requestSeq = (requestSeq + 1) % 4;
       lastRequest = SESSION_TIME;
     }
@@ -297,7 +298,7 @@ void setup() {
 
   // CAN Bus Init
   canBusReady = CAN32_initCANBus(CAN_TX_PIN, CAN_RX_PIN,
-    TWAI_TIMING_CONFIG_250KBITS(), TWAI_FILTER_CONFIG_ACCEPT_ALL());
+    TWAI_TIMING_CONFIG_500KBITS(), TWAI_FILTER_CONFIG_ACCEPT_ALL());
 
   // RTC Init
   RTCavailable = RTCinit(rtc, &Wire1);

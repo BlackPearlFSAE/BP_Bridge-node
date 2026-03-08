@@ -34,26 +34,6 @@
 #include <base_sensors.h>
 #include <shared_config.h>
 
-/************************* Pin Definitions ***************************/
-// Mechanical Sensors
-#define STR_Roll 5
-#define STR_Heave 6
-
-// Electrical Pins
-#define I_SENSE_PIN 4
-#define TMP_PIN 8
-#define APPS_PIN 15
-#define BPPS_PIN 7
-#define AMS_OK_PIN 37
-#define IMD_OK_PIN 38
-#define HV_ON_PIN 35
-#define BSPD_OK_PIN 36
-
-int ElectPinArray[8] = {
-  I_SENSE_PIN, TMP_PIN, APPS_PIN, BPPS_PIN,
-  AMS_OK_PIN, IMD_OK_PIN, HV_ON_PIN, BSPD_OK_PIN
-};
-
 /************************* Global Variables ***************************/
 
 // WebSocket and Network config
@@ -71,7 +51,7 @@ socketstatus* BPsocketstatus = BPMobile.webSocketstatus;
 // Sampling Rates (Hz)
 const float MECH_SENSORS_SAMPLING_RATE = DEFAULT_PUBLISH_RATE;
 const float ELECT_SENSORS_SAMPLING_RATE = DEFAULT_PUBLISH_RATE;
-const float ELECT_FAULT_STAT_SAMPLING_RATE = (DEFAULT_PUBLISH_RATE/2);
+const float ELECT_FAULT_STAT_SAMPLING_RATE = (DEFAULT_PUBLISH_RATE);
 
 // Sensor Data
 Mechanical myMechData;
@@ -107,7 +87,7 @@ char csvFilename[48] = {0};
 int fileIndex = 0;
 const char* header_Timestamp = "DataPoint,UnixTime,SessionTime";
 const char* header_Mechanical = "Stroke1_mm,Stroke2_mm";
-const char* header_Electrical = "I_SENSE(A),TMP(C),APPS(%),BPPS(%),AMS_OK,IMD_OK,HV_ON,BSPD_OK";
+const char* header_Electrical = "I_SENSE(A),TMP(C),APPS(%),BPPS(%),AMS_OK,IMD_OK,HV_ON,BSPD_OK,Steering angle";
 char csvHeaderBuffer[256] = "";
 int appenderCount = 5;
 
@@ -606,4 +586,6 @@ void append_ElectData_toCSVFile(File& dataFile, void* data) {
   dataFile.print(e->HV_ON ? 1 : 0);
   dataFile.print(",");
   dataFile.print(e->BSPD_OK ? 1 : 0);
+  dataFile.print(",");
+  dataFile.print(e->steering);
 }

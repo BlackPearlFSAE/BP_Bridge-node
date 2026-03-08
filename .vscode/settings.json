@@ -55,5 +55,14 @@
     "unordered_set": "cpp",
     "vector": "cpp",
     "regex": "cpp"
-  }
+  },
+  // "C_Cpp.intelPliSenseEngine": "disabled",
+  // "clangd.arguments": ["--background-index", "--compile-commands-dir=${workspaceFolder}"],
+  // "files.watcherExclude": {
+  //   "**/.pio/**": true
+  // },
+  // "files.exclude": {
+  //     "**/.pio": true
+  // }
+  
 }

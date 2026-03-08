@@ -292,7 +292,7 @@ void canTask(void* parameter) {
       // Expected: parse rxmsg based on BMU CAN IDs (BCU_ADD range)
       // and populate BMU_Package[] under dataMutex
       if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-        // process_BMU_CANmsg(&rxmsg, BMU_Package, MODULE_NUM);
+        process_BMU_CANmsg(&rxmsg, BMU_Package, MODULE_NUM);
         xSemaphoreGive(dataMutex);
       }
     }
@@ -414,7 +414,7 @@ void loop() {
     #if DEBUG_MODE == 1
       debugBMUModule(&debugBMU, 0);
     #elif DEBUG_MODE == 2
-      teleplotBMU(&debugBMU, 0);
+      teleplotBMUModule(&debugBMU, 0);
     #endif
     lastTeleplotDebug = SESSION_TIME_MS;
   }

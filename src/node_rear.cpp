@@ -38,22 +38,6 @@
 #include <base_sensors.h>
 #include <shared_config.h>
 
-/************************* Pin Definitions ***************************/
-
-// Mechanical Sensors
-#define ENCODER_PINL 3
-#define ENCODER_PINR 9
-#define ENCODER_N 50
-#define STR_Roll 5
-#define STR_Heave 6
-
-// Motion Sensors
-#define GPS_RX_PIN 2
-#define GPS_TX_PIN 1
-#define GPS_BAUD 115200
-#define IMU_SDA 42
-#define IMU_SCL 41
-
 /************************* Global Variables ***************************/
 
 // WebSocket and Network config
@@ -280,7 +264,7 @@ void sensorTask(void* parameter) {
   while (true) {
     // Read sensors into local structs
     #if MOCK_FLAG == 0
-      RPMsensorUpdate(&localMech, RPM_CalcInterval, ENCODER_N);
+      // RPMsensorUpdate(&localMech, RPM_CalcInterval, ENCODER_N);
       StrokesensorUpdate(&localMech, STR_Heave, STR_Roll);
       GPSupdate(&localOdom, gpsSerial, gps, GPSavailable);
       IMUupdate(&localOdom, mpu, IMUavailable);
@@ -331,8 +315,8 @@ void setup() {
   GPSavailable = GPSinit(gpsSerial, GPS_TX_PIN, GPS_RX_PIN, GPS_BAUD);
 
   // Base Sensor Init
-  RPMinit_withExtPullUP(ENCODER_PINL, ENCODER_PINR);
-  RPM_setCalcPeriod(My_timer, 100);
+  // RPMinit_withExtPullUP(ENCODER_PINL, ENCODER_PINR);
+  // RPM_setCalcPeriod(My_timer, 100);
   StrokesensorInit(STR_Heave, STR_Roll);
 
   // WiFi & WebSocket
