@@ -222,6 +222,7 @@ void timeSyncTask(void* parameter) {
     }
 
     // Remote NTP recalibration every 60s
+    #if WIFI_ENABLED == 1
     if (SESSION_TIME - lastRemoteSync >= REMOTE_SYNC_INTERVAL) {
       uint64_t externalTime = WiFi32_getNTPTime();
       if (externalTime > 0 && RTCavailable) {
@@ -230,6 +231,7 @@ void timeSyncTask(void* parameter) {
       }
       lastRemoteSync = SESSION_TIME;
     }
+    #endif
 
     vTaskDelay(pdMS_TO_TICKS(100));
   }
@@ -314,17 +316,31 @@ void setup() {
   }
 
 
-  // WiFi & WebSocket
+  // WiFi Init
+  #if WIFI_ENABLED == 1
   initWiFi(ssid, password, 10);
   int ntpready;
   if (WiFi.status() == WL_CONNECTED) {
     ntpready = WiFi32_initNTP();
+  }
+  #else
+  int ntpready = 0;
+  Serial.println("[WiFi] Disabled (WIFI_ENABLED=0)");
+  #endif
+
+  // WebSocket Init
+  #if WIFI_ENABLED == 1 && WS_ENABLED == 1
+  if (WiFi.status() == WL_CONNECTED) {
     BPMobile.setClientName(clientName);
     BPMobile.setRegisterCallback(registerClient);
     BPMobile.initWebSocketSSL(serverHost, serverPort, clientName);
   }
+  #elif WS_ENABLED == 0
+  Serial.println("[WS] Disabled (WS_ENABLED=0)");
+  #endif
 
   // SD Card Init
+  #if SD_ENABLED == 1
   SD32_initSDCard(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN, sdCardReady);
   strcat(csvHeaderBuffer, header_Timestamp);
   strcat(csvHeaderBuffer, ",");
@@ -335,12 +351,16 @@ void setup() {
     SD32_createCSVFile(csvFilename, csvHeaderBuffer);
     SD32_openPersistentFile(csvFilename);
   }
+  #else
+  Serial.println("[SD] Disabled (SD_ENABLED=0)");
+  #endif
 
   // Time Sync
   #if calibrate_RTC == 1
     RTCcalibrate(rtc,(ntpready) ? (WiFi32_getNTPTime()/1000ULL): 1000000000000ULL ,RTCavailable);
   #endif
-  syncTime_setSyncPoint(RTC_UNIX_TIME, (RTCavailable) ? RTC_getUnix(rtc, RTCavailable) : 1000000000000ULL);
+  // syncTime_setSyncPoint(RTC_UNIX_TIME, (RTCavailable) ? RTC_getUnix(rtc, RTCavailable) : 1000000000000ULL);
+  syncTime_setSyncPoint(RTC_UNIX_TIME, (RTCavailable) ? (uint64_t)RTC_getUnix(rtc, RTCavailable) * 1000ULL : 1000000000000ULL);
 
   // Sync ESP32 internal clock from DS3231 so FAT file timestamps are correct
   if (RTCavailable) {
@@ -361,11 +381,17 @@ void setup() {
   // FreeRTOS Setup
   dataMutex = xSemaphoreCreateMutex();
   serialMutex = xSemaphoreCreateMutex();
+  #if SD_ENABLED == 1
   sdQueue = xQueueCreate(30, sizeof(SDLogEntry));
+  #endif
 
   // Core 0 tasks
+  #if WIFI_ENABLED == 1 && WS_ENABLED == 1
   xTaskCreatePinnedToCore(BPMobileTask, "BPMobileTask", 8192, NULL, 1, &BPMobileTaskHandle, 0);
   Serial.println("[RTOS] BPMobile task on Core 0 (pri 1)");
+  #else
+  Serial.println("[RTOS] BPMobile task SKIPPED (WIFI_ENABLED=0 or WS_ENABLED=0)");
+  #endif
 
   xTaskCreatePinnedToCore(timeSyncTask, "TimeSyncTask", 4096, NULL, 3, &timeSyncTaskHandle, 0);
   Serial.println("[RTOS] TimeSync task on Core 0 (pri 3)");
@@ -378,8 +404,12 @@ void setup() {
     Serial.println("[RTOS] CAN task SKIPPED (MOCK_FLAG=1)");
   #endif
 
+  #if SD_ENABLED == 1
   xTaskCreatePinnedToCore(sdTask, "SDTask", 4096, NULL, 2, &sdTaskHandle, 1);
   Serial.println("[RTOS] SD Logger task on Core 1 (pri 2)");
+  #else
+  Serial.println("[RTOS] SD Logger task SKIPPED (SD_ENABLED=0)");
+  #endif
 }
 
 /************************* Main Loop ***************************/
@@ -432,6 +462,7 @@ void loop() {
   #endif
 
   // SD card close file once removed
+  #if SD_ENABLED == 1
   if (sdCardReady && !SD32_checkSDconnect()) {
     SD32_closePersistentFile();
     sdCardReady = false;
@@ -457,6 +488,7 @@ void loop() {
     }
     lastSDLog = SESSION_TIME_MS;
   }
+  #endif
 
   vTaskDelay(pdMS_TO_TICKS(20));
 }
