@@ -12,7 +12,6 @@
 #include "soc/rtc_cntl_reg.h"
 #include <Arduino.h>
 #include <SPI.h>
-#include <SD.h>
 #include <WiFi.h>
 #include <Wire.h>
 #include <WebSocketsClient.h>
@@ -107,7 +106,7 @@ void registerClient(const char* clientName);
 
 // File Management
 void showDeviceStatus();
-void append_BMU_toCSVFile(File& dataFile, BMUdata* bmu, int dp, uint64_t Timestamp, uint64_t session);
+void append_BMU_toCSVFile(SD32File& dataFile, BMUdata* bmu, int dp, uint64_t Timestamp, uint64_t session);
 void createPartitionDir();
 void openAllFiles();
 void closeAllFiles();
@@ -132,7 +131,7 @@ struct SDLogEntry {
 };
 
 // File handles for persistent logging (one per BMU)
-static File bmuFiles[MODULE_NUM];
+static SD32File bmuFiles[MODULE_NUM];
 static bool filesOpen = false;
 static volatile bool closeRequested = false;  // Signal from loop() to sdTask
 
@@ -225,11 +224,26 @@ void sdTask(void* parameter) {
       unsigned long SESSION_TIME = millis();
 
       // Write one row to each BMU file (one file per battery module)
+      #if SD_LOG_BINARY == 1
+      struct BMUBinRow {
+        int dataPoint;
+        uint64_t unixTime;
+        uint64_t sessionTime;
+        BMUdata bmu;
+      };
       for (int i = 0; i < MODULE_NUM; i++) {
-        if (bmuFiles[i]) {
+        if (bmuFiles[i].isOpen()) {
+          BMUBinRow row = { entry.dataPoint, entry.unixTime, entry.sessionTime, entry.bmu[i] };
+          bmuFiles[i].write((uint8_t*)&row, sizeof(row));
+        }
+      }
+      #else
+      for (int i = 0; i < MODULE_NUM; i++) {
+        if (bmuFiles[i].isOpen()) {
           append_BMU_toCSVFile(bmuFiles[i], &entry.bmu[i], entry.dataPoint, entry.unixTime, entry.sessionTime);
         }
       }
+      #endif
 
       // Flush all BMU files periodically to prevent data loss on power cut
       if (SESSION_TIME - lastFlushTime >= SD_FLUSH_INTERVAL) {
@@ -497,12 +511,18 @@ void loop() {
 // Result: /AMS_session_000/AMS_p0/bmu_0.csv ... bmu_7.csv
 void createPartitionDir() {
   snprintf(partDirPath, sizeof(partDirPath), "%s/AMS_p%d", sessionDirPath, partIndex);
-  SD.mkdir(partDirPath);
+  sd.mkdir(partDirPath);
   Serial.printf("[SD] Created partition directory: %s\n", partDirPath);
 
   for (int i = 0; i < MODULE_NUM; i++) {
-    SD32_generateFilenameInDir(bmuFilePaths[i], partDirPath, "bmu", i);
+    SD32_generateFilenameInDir(bmuFilePaths[i], partDirPath, "bmu", i, SD_LOG_BINARY ? "bin" : "csv");
+    #if SD_LOG_BINARY == 1
+    char nodeName[16];
+    snprintf(nodeName, sizeof(nodeName), "AMS_bmu%d", i);
+    SD32_createBinFile(bmuFilePaths[i], nodeName, sizeof(BMUdata) + sizeof(int) + sizeof(uint64_t) * 2);
+    #else
     SD32_createCSVFile(bmuFilePaths[i], header_BMU);
+    #endif
     Serial.printf("  BMU %d file: %s\n", i, bmuFilePaths[i]);
   }
   openAllFiles();
@@ -510,8 +530,7 @@ void createPartitionDir() {
 
 void openAllFiles() {
   for (int i = 0; i < MODULE_NUM; i++) {
-    bmuFiles[i] = SD.open(bmuFilePaths[i], FILE_APPEND);
-    if (!bmuFiles[i]) {
+    if (!bmuFiles[i].open(bmuFilePaths[i], O_WRONLY | O_CREAT | O_APPEND)) {
       Serial.printf("[SD Card] ERROR: Could not open BMU file %d\n", i);
     }
   }
@@ -521,7 +540,7 @@ void openAllFiles() {
 
 void closeAllFiles() {
   for (int i = 0; i < MODULE_NUM; i++) {
-    if (bmuFiles[i]) {
+    if (bmuFiles[i].isOpen()) {
       bmuFiles[i].flush();
       bmuFiles[i].close();
     }
@@ -532,7 +551,7 @@ void closeAllFiles() {
 
 void flushAllFiles() {
   for (int i = 0; i < MODULE_NUM; i++) {
-    if (bmuFiles[i]) {
+    if (bmuFiles[i].isOpen()) {
       bmuFiles[i].flush();
     }
   }
@@ -540,7 +559,7 @@ void flushAllFiles() {
 
 /************************* CSV Appenders ***************************/
 
-void append_BMU_toCSVFile(File& dataFile, BMUdata* bmu, int dp, uint64_t Timestamp, uint64_t session) {
+void append_BMU_toCSVFile(SD32File& dataFile, BMUdata* bmu, int dp, uint64_t Timestamp, uint64_t session) {
   // DataPoint, UnixTime, SessionTime
   dataFile.print(dp); dataFile.print(",");
   dataFile.print(Timestamp); dataFile.print(",");

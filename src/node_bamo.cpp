@@ -13,7 +13,6 @@
 #include "soc/rtc_cntl_reg.h"
 #include <Arduino.h>
 #include <SPI.h>
-#include <SD.h>
 #include <WiFi.h>
 #include <Wire.h>
 #include <driver/twai.h>
@@ -94,10 +93,10 @@ int appenderCount = 4;
 /************************* Function Declarations ***************************/
 
 // CSV Appenders
-void append_DataPoint_toCSVFile(File& dataFile, void* data);
-void append_Timestamp_toCSVFile(File& dataFile, void* data);
-void append_SessionTime_toCSVFile(File& dataFile, void* data);
-void append_BAMOdata_toCSVFile(File& dataFile, void* data);
+void append_DataPoint_toCSVFile(SD32File& dataFile, void* data);
+void append_Timestamp_toCSVFile(SD32File& dataFile, void* data);
+void append_SessionTime_toCSVFile(SD32File& dataFile, void* data);
+void append_BAMOdata_toCSVFile(SD32File& dataFile, void* data);
 
 // BPMobile Publishers
 void publishBAMOpower(BAMOCar* bamocar);
@@ -176,12 +175,19 @@ void sdTask(void* parameter) {
       if (localDataPoint > 0 && localDataPoint % SD_MAX_ROWS == 0) {
         SD32_closePersistentFile();
         fileIndex++;
-        SD32_generateFilenameInDir(csvFilename, sessionDirPath, "File", fileIndex);
+        SD32_generateFilenameInDir(csvFilename, sessionDirPath, "File", fileIndex, SD_LOG_BINARY ? "bin" : "csv");
+        #if SD_LOG_BINARY == 1
+        SD32_createBinFile(csvFilename, "Bamo", sizeof(SDLogEntry));
+        #else
         SD32_createCSVFile(csvFilename, csvHeaderBuffer);
+        #endif
         SD32_openPersistentFile(csvFilename);
         Serial.printf("[SD] Row limit reached, rotated to: %s\n", csvFilename);
       }
 
+      #if SD_LOG_BINARY == 1
+      SD32_appendBinaryPersistent(&entry, sizeof(SDLogEntry), SD_FLUSH_INTERVAL, SD_CLOSE_INTERVAL);
+      #else
       // Build appender array — each function writes its fields to the open file
       AppenderFunc appenders[appenderCount] = {
         append_DataPoint_toCSVFile,
@@ -197,6 +203,7 @@ void sdTask(void* parameter) {
       // Append one CSV row + newline; flushes to SD at SD_FLUSH_INTERVAL
       SD32_appendBulkDataPersistent(appenders, structArray, appenderCount
                                     , SD_FLUSH_INTERVAL,SD_CLOSE_INTERVAL);
+      #endif
       localDataPoint++;
     }
   }
@@ -347,8 +354,12 @@ void setup() {
   strcat(csvHeaderBuffer, header_BAMO);
   if (sdCardReady) {
     SD32_createSessionDir(sessionNumber, sessionDirPath, "BAMO");
-    SD32_generateFilenameInDir(csvFilename, sessionDirPath, "File", fileIndex);
+    SD32_generateFilenameInDir(csvFilename, sessionDirPath, "File", fileIndex, SD_LOG_BINARY ? "bin" : "csv");
+    #if SD_LOG_BINARY == 1
+    SD32_createBinFile(csvFilename, "Bamo", sizeof(SDLogEntry));
+    #else
     SD32_createCSVFile(csvFilename, csvHeaderBuffer);
+    #endif
     SD32_openPersistentFile(csvFilename);
   }
   #else
@@ -562,25 +573,25 @@ void registerClient(const char* clientName) {
 
 /************************* CSV Appenders ***************************/
 
-void append_DataPoint_toCSVFile(File& dataFile, void* data) {
+void append_DataPoint_toCSVFile(SD32File& dataFile, void* data) {
   int* dp = (int*)data;
   dataFile.print(*dp);
   dataFile.print(",");
 }
 
-void append_Timestamp_toCSVFile(File& dataFile, void* data) {
+void append_Timestamp_toCSVFile(SD32File& dataFile, void* data) {
   uint64_t* t = (uint64_t*)data;
   dataFile.print(*t);
   dataFile.print(",");
 }
 
-void append_SessionTime_toCSVFile(File& dataFile, void* data) {
+void append_SessionTime_toCSVFile(SD32File& dataFile, void* data) {
   uint64_t* t = (uint64_t*)data;
   dataFile.print(*t);
   dataFile.print(",");
 }
 
-void append_BAMOdata_toCSVFile(File& dataFile, void* data) {
+void append_BAMOdata_toCSVFile(SD32File& dataFile, void* data) {
   BAMOCar* b = static_cast<BAMOCar*>(data);
   dataFile.print(b->canVoltageValid ? b->canVoltage : 0.0, 2);
   dataFile.print(",");

@@ -1,13 +1,16 @@
 #include "Arduino.h"
-#include "FS.h"
-#include "SD.h"
 #include "SPI.h"
-#include <SD32_util.h>
+#include "SD32_util.h"
+
+// ============================================================================
+// GLOBAL SdFat INSTANCE
+// ============================================================================
+SdFat32 sd;
 
 // ============================================================================
 // PERSISTENT FILE HANDLE
 // ============================================================================
-static File _persistentFile;
+static SD32File _persistentFile;
 static bool _persistentFileOpen = false;
 static unsigned long _lastFlushTime = 0;
 static unsigned long _lastCloseTime = 0;
@@ -22,7 +25,7 @@ void SD32_initSDCard(int sd_sck, int sd_miso, int sd_mosi, int sd_cs, bool &sdCa
   Serial.print("Initializing SD card...");
   SPI.begin(sd_sck, sd_miso, sd_mosi, sd_cs);
 
-  if (!SD.begin(sd_cs, SPI, 4000000, "/sd", 10, false)) {
+  if (!sd.begin(SdSpiConfig(sd_cs, DEDICATED_SPI, SD_SCK_MHZ(25)))) {
     Serial.println(" FAILED!");
     Serial.println("SD card logging disabled.");
     Serial.println("Check:");
@@ -35,23 +38,24 @@ void SD32_initSDCard(int sd_sck, int sd_miso, int sd_mosi, int sd_cs, bool &sdCa
   Serial.println(" SUCCESS!");
   sdCardReady = true;
 
-  uint8_t cardType = SD.cardType();
+  uint8_t cardType = sd.card()->type();
   Serial.print("Card Type: ");
-  if (cardType == CARD_MMC) Serial.println("MMC");
-  else if (cardType == CARD_SD) Serial.println("SDSC");
-  else if (cardType == CARD_SDHC) Serial.println("SDHC");
+  if (cardType == SD_CARD_TYPE_SD1) Serial.println("SD1");
+  else if (cardType == SD_CARD_TYPE_SD2) Serial.println("SD2");
+  else if (cardType == SD_CARD_TYPE_SDHC) Serial.println("SDHC");
   else Serial.println("UNKNOWN");
 
-  uint64_t cardSize = SD.cardSize() / (1024 * 1024);
+  uint64_t cardSize = (uint64_t)sd.card()->sectorCount() * 512ULL / (1024 * 1024);
   Serial.printf("Card Size: %lluMB\n", cardSize);
 }
 
 bool SD32_checkSDconnect() {
-  return SD.cardType() != CARD_NONE;
+  cid_t cid;
+  return sd.card()->readCID(&cid);
 }
 
 void SD32_getSDsize() {
-  uint64_t cardSize = SD.cardSize() / (1024 * 1024);
+  uint64_t cardSize = (uint64_t)sd.card()->sectorCount() * 512ULL / (1024 * 1024);
   Serial.printf("SD Card Size: %lluMB\n", cardSize);
 }
 
@@ -61,37 +65,39 @@ void SD32_getSDsize() {
 
 void SD32_generateUniqueFilename(int &sessionNumber, char* csvFilename, const char* prefix) {
   sessionNumber = 0;
-  String searchPrefix = String(prefix) + "_";
-  int prefixLen = searchPrefix.length();
+  char searchPrefix[32];
+  snprintf(searchPrefix, sizeof(searchPrefix), "%s_", prefix);
+  int prefixLen = strlen(searchPrefix);
 
-  File root = SD.open("/");
-  if (root) {
-    File entry = root.openNextFile();
-    while (entry) {
-      // entry.name() returns full path (e.g. "/Front_001.csv"), strip leading '/'
-      String filename = entry.name();
-      if (filename.startsWith("/")) filename = filename.substring(1);
-      if (filename.startsWith(searchPrefix) && filename.endsWith(".csv")) {
-        int endIdx = filename.indexOf(".csv");
-        if (endIdx > prefixLen) {
-          String numStr = filename.substring(prefixLen, endIdx);
-          int fileNum = numStr.toInt();
-          if (fileNum >= sessionNumber) {
-            sessionNumber = fileNum + 1;
+  SD32File root;
+  if (root.open("/")) {
+    SD32File entry;
+    char nameBuf[64];
+    while (entry.openNext(&root, O_RDONLY)) {
+      entry.getName(nameBuf, sizeof(nameBuf));
+      entry.close();
+
+      // Check if filename matches pattern: prefix_NNN.csv
+      if (strncmp(nameBuf, searchPrefix, prefixLen) == 0) {
+        char* dotPos = strstr(nameBuf, ".csv");
+        if (dotPos && dotPos > nameBuf + prefixLen) {
+          // Extract number between prefix and .csv
+          char numStr[8] = {0};
+          int numLen = dotPos - (nameBuf + prefixLen);
+          if (numLen > 0 && numLen < (int)sizeof(numStr)) {
+            strncpy(numStr, nameBuf + prefixLen, numLen);
+            int fileNum = atoi(numStr);
+            if (fileNum >= sessionNumber) {
+              sessionNumber = fileNum + 1;
+            }
           }
         }
       }
-      entry.close();
-      entry = root.openNextFile();
     }
     root.close();
   }
 
-  char buffer[32];
-  snprintf(buffer, sizeof(buffer), "/%s_%03d.csv", prefix, sessionNumber);
-  strncpy(csvFilename, buffer, 31);
-  csvFilename[31] = '\0';
-
+  snprintf(csvFilename, 48, "/%s_%03d.csv", prefix, sessionNumber);
   Serial.print("Generated unique filename: ");
   Serial.println(csvFilename);
 }
@@ -99,56 +105,51 @@ void SD32_generateUniqueFilename(int &sessionNumber, char* csvFilename, const ch
 void SD32_createSessionDir(int &sessionNumber, char* sessionDirPath, const char* prefix) {
   sessionNumber = 0;
 
-  // Build search pattern: "{prefix}_session_"
   char searchPattern[32];
   snprintf(searchPattern, sizeof(searchPattern), "%s_session_", prefix);
   int patternLen = strlen(searchPattern);
 
-  // Find next available session number
-  File root = SD.open("/");
-  if (root) {
-    File entry = root.openNextFile();
-    while (entry) {
-      if (entry.isDirectory()) {
-        // entry.name() returns full path (e.g. "/Front_session_000"), strip leading '/'
-        String dirname = entry.name();
-        if (dirname.startsWith("/")) dirname = dirname.substring(1);
-        if (dirname.startsWith(searchPattern)) {
-          int num = dirname.substring(patternLen).toInt();
+  SD32File root;
+  if (root.open("/")) {
+    SD32File entry;
+    char nameBuf[64];
+    while (entry.openNext(&root, O_RDONLY)) {
+      if (entry.isDir()) {
+        entry.getName(nameBuf, sizeof(nameBuf));
+        if (strncmp(nameBuf, searchPattern, patternLen) == 0) {
+          int num = atoi(nameBuf + patternLen);
           if (num >= sessionNumber) {
             sessionNumber = num + 1;
           }
         }
       }
       entry.close();
-      entry = root.openNextFile();
     }
     root.close();
   }
 
-  // Create session directory
   snprintf(sessionDirPath, 48, "/%s_session_%03d", prefix, sessionNumber);
-  if (!SD.exists(sessionDirPath)) {
-    SD.mkdir(sessionDirPath);
+  if (!sd.exists(sessionDirPath)) {
+    sd.mkdir(sessionDirPath);
     Serial.printf("[SD] Created session directory: %s\n", sessionDirPath);
   }
 }
 
-void SD32_generateFilenameInDir(char* filepath, const char* dirPath, const char* prefix, int index) {
+void SD32_generateFilenameInDir(char* filepath, const char* dirPath, const char* prefix, int index, const char* ext) {
   if (index >= 0) {
-    snprintf(filepath, 48, "%s/%s_%d.csv", dirPath, prefix, index);
+    snprintf(filepath, 48, "%s/%s_%d.%s", dirPath, prefix, index, ext);
   } else {
-    snprintf(filepath, 48, "%s/%s.csv", dirPath, prefix);
+    snprintf(filepath, 48, "%s/%s.%s", dirPath, prefix, ext);
   }
 }
 
 // ============================================================================
-// NON-PERSISTENT APPEND (opens/closes file each call)
+// CSV LOGGING
 // ============================================================================
 
-void SD32_createCSVFile(char* csvFilename, const char* csvHeader) {
-  File dataFile = SD.open((const char*)csvFilename, FILE_WRITE);
-  if (dataFile) {
+void SD32_createCSVFile(const char* csvFilename, const char* csvHeader) {
+  SD32File dataFile;
+  if (dataFile.open(csvFilename, O_WRONLY | O_CREAT | O_TRUNC)) {
     dataFile.println(csvHeader);
     dataFile.flush();
     dataFile.close();
@@ -159,8 +160,8 @@ void SD32_createCSVFile(char* csvFilename, const char* csvHeader) {
 }
 
 void SD32_appendBulkDataToCSV(const char* filepath, AppenderFunc* appenders, void** dataArray, size_t count) {
-  File file = SD.open(filepath, FILE_APPEND);
-  if (!file) {
+  SD32File file;
+  if (!file.open(filepath, O_WRONLY | O_CREAT | O_APPEND)) {
     Serial.println("[SD] ERROR: Could not open file!");
     return;
   }
@@ -184,8 +185,7 @@ bool SD32_openPersistentFile(const char* filepath) {
     return true;
   }
 
-  _persistentFile = SD.open(filepath, FILE_APPEND);
-  if (!_persistentFile) {
+  if (!_persistentFile.open(filepath, O_WRONLY | O_CREAT | O_APPEND)) {
     Serial.println("[SD] ERROR: Could not open persistent file!");
     _persistentFileOpen = false;
     return false;
@@ -200,7 +200,7 @@ bool SD32_openPersistentFile(const char* filepath) {
 }
 
 void SD32_closePersistentFile() {
-  if (_persistentFileOpen && _persistentFile) {
+  if (_persistentFileOpen && _persistentFile.isOpen()) {
     _persistentFile.flush();
     _persistentFile.close();
     _persistentFileOpen = false;
@@ -214,14 +214,14 @@ bool SD32_isPersistentFileOpen() {
 }
 
 void SD32_flushPersistentFile() {
-  if (_persistentFileOpen && _persistentFile) {
+  if (_persistentFileOpen && _persistentFile.isOpen()) {
     _persistentFile.flush();
     _lastFlushTime = millis();
   }
 }
 
 void SD32_appendBulkDataPersistent(AppenderFunc* appenders, void** dataArray, size_t count, unsigned long flushIntervalMs, unsigned long closeIntervalMs) {
-  if (!_persistentFileOpen || !_persistentFile) {
+  if (!_persistentFileOpen || !_persistentFile.isOpen()) {
     Serial.println("[SD] ERROR: Persistent file not open!");
     return;
   }
@@ -241,8 +241,54 @@ void SD32_appendBulkDataPersistent(AppenderFunc* appenders, void** dataArray, si
     _persistentFile.flush();
     _persistentFile.close();
     // Reopen the file
-    _persistentFile = SD.open(_persistentFilePath, FILE_APPEND);
-    if (!_persistentFile) {
+    if (!_persistentFile.open(_persistentFilePath, O_WRONLY | O_CREAT | O_APPEND)) {
+      _persistentFileOpen = false;
+      Serial.println("[SD] ERROR: Could not reopen persistent file after cycle!");
+    }
+    _lastCloseTime = now;
+  }
+}
+
+// ============================================================================
+// BINARY LOGGING
+// ============================================================================
+
+void SD32_createBinFile(const char* filepath, const char* nodeName, uint16_t entrySize) {
+  SD32File f;
+  if (f.open(filepath, O_WRONLY | O_CREAT | O_TRUNC)) {
+    BinFileHeader hdr = {};
+    hdr.magic = 0x42504C47;  // "BPLG"
+    hdr.version = 1;
+    hdr.entrySize = entrySize;
+    hdr.headerSize = sizeof(BinFileHeader);
+    strncpy(hdr.nodeName, nodeName, sizeof(hdr.nodeName) - 1);
+
+    f.write((uint8_t*)&hdr, sizeof(hdr));
+    f.flush();
+    f.close();
+    Serial.printf("[SD] BIN file created: %s (entrySize=%u)\n", filepath, entrySize);
+  } else {
+    Serial.println("[SD] ERROR: Could not create BIN file!");
+  }
+}
+
+void SD32_appendBinaryPersistent(const void* data, size_t dataSize, unsigned long flushIntervalMs, unsigned long closeIntervalMs) {
+  if (!_persistentFileOpen || !_persistentFile.isOpen()) {
+    Serial.println("[SD] ERROR: Persistent file not open!");
+    return;
+  }
+
+  _persistentFile.write((const uint8_t*)data, dataSize);
+
+  unsigned long now = millis();
+  if (flushIntervalMs == 0 || (now - _lastFlushTime >= flushIntervalMs)) {
+    _persistentFile.flush();
+    _lastFlushTime = now;
+  }
+  if (closeIntervalMs > 0 && (now - _lastCloseTime >= closeIntervalMs)) {
+    _persistentFile.flush();
+    _persistentFile.close();
+    if (!_persistentFile.open(_persistentFilePath, O_WRONLY | O_CREAT | O_APPEND)) {
       _persistentFileOpen = false;
       Serial.println("[SD] ERROR: Could not reopen persistent file after cycle!");
     }

@@ -80,6 +80,7 @@ int ElectPinArray[9] = {
 #define MOCK_FLAG 0
 #define DEBUG_MODE 2  // 0 = Disabled, 1 = Regular Serial, 2 = Teleplot
 #define SD_ENABLED   1    // 0 = Disable SD card init + logging, 1 = Enabled
+#define SD_LOG_BINARY 0   // 0 = CSV text logging, 1 = Binary struct logging
 #define WIFI_ENABLED 1    // 0 = Disable WiFi init (also disables WS), 1 = Enabled
 #define calibrate_RTC 0
 #define TIME_SRC 0 // 0 = RTC , 1 = WiFI NTP Pool
