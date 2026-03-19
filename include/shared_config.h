@@ -53,10 +53,10 @@ extern int ElectPinArray[9];
 #define DEFAULT_SD_ROW_LIMIT 5000 // 1000 rows 
 
 // Network handling config
-// #define DEFAULT_SSID "realme C55"
-// #define DEFAULT_PASSWORD "realme1234"
-#define DEFAULT_SSID "dlink-D66C"
-#define DEFAULT_PASSWORD "kdapk67358"
+#define DEFAULT_SSID "realme C55"
+#define DEFAULT_PASSWORD "realme1234"
+// #define DEFAULT_SSID "dlink-D66C"
+// #define DEFAULT_PASSWORD "kdapk67358"
 
 #define DEFAULT_SERVER_HOST "blackpearl-ws-8z9a.onrender.com"
 // #define DEFAULT_SERVER_HOST "blackpearl-dashboard.netlify.app"
