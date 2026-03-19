@@ -1,5 +1,11 @@
 #include <Arduino.h>
 #include <base_sensors.h>
+#include <shared_config.h>
+
+int ElectPinArray[9] = {
+  I_SENSE_PIN, TMP_PIN, APPS_PIN, BPPS_PIN,
+  AMS_OK_PIN, IMD_OK_PIN, HV_ON_PIN, BSPD_OK_PIN, STEERING
+};
 
 // ISR shared variable
 volatile int counterL = 0;
@@ -114,7 +120,7 @@ void ElectSensorsUpdate(Electrical *ElectSensors, int* pinArrays){
   // --- BPPS (Brake Position) - Linear potentiometer ---
   // Voltage maps linearly to distance (0V = 0mm, 3.3V = 75mm)
   ElectSensors->BPPS = (volt_bpps / aref) * bpps_max_dist_mm + bpps_offset_mm;
-  ElectSensors->steering = (volt_steering / aref) * steering_max__angle + steering_offset_angle;
+  ElectSensors->steering = (volt_steering / 1.9) * steering_max__angle + steering_offset_angle;
 
   // --- Digital Fault Status Signals ---
   ElectSensors->AMS_OK = digitalRead(pinArrays[4]);
