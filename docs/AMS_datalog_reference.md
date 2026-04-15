@@ -1,17 +1,13 @@
-# Datalog.cpp Update Session
+# AMS Datalog Reference
 
-**Date:** 2026-01-22
-
-## Summary
-
-Updated `datalog.cpp` to align with the current BCU/BMU data architecture and added multi-file persistent support to `SD32_util`.
+Reference for the AMS node's data scaling, SD card file-handle limits, and multi-file persistent logging API. Current source: `src/node_ams.cpp` + `lib/SD32_util/`.
 
 ---
 
-## 1. Data Scaling Fixes in datalog.cpp
+## 1. BMU/AMS Data Scaling
 
-### Problem
-`datalog.cpp` was logging raw encoded values instead of human-readable data. The BCU/BMU use encoded formats for CAN transmission.
+### Context
+BCU/BMU payloads arrive over CAN in encoded form. CSV and WebSocket outputs must decode before writing, otherwise logs contain raw integers instead of volts/°C.
 
 ### Changes Made
 
@@ -109,14 +105,14 @@ if (f) f->println("data");
 
 ---
 
-## Files Modified
+## Related Files
 
-| File | Changes |
-|------|---------|
-| `src/datalog.cpp` | Data scaling in CSV/WebSocket output, mock data encoding |
-| `lib/SD32_util/SD32_util.h` | Added multi-file persistent API declarations |
-| `lib/SD32_util/SD32_util.cpp` | Implemented multi-file functions, increased max_files to 20 |
-| `platformio.ini` | Added build flags for datalog env |
+| File | Role |
+|------|------|
+| `src/node_ams.cpp` | AMS node — CSV/WebSocket output with decoded scaling |
+| `lib/SD32_util/SD32_util.h` | Multi-file persistent API declarations |
+| `lib/SD32_util/SD32_util.cpp` | Multi-file implementation, `max_files=20` |
+| `lib/ams_data_util/` | BMU/AMS/OBC structs and CAN parser |
 
 ---
 

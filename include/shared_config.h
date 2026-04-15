@@ -60,6 +60,7 @@ extern int ElectPinArray[9];
 
 #define DEFAULT_SERVER_HOST "blackpearl-ws-8z9a.onrender.com"
 // #define DEFAULT_SERVER_HOST "blackpearl-dashboard.netlify.app"
+// #define DEFAULT_SERVER_HOST "Device IP Address"
 #define DEFAULT_SERVER_PORT 443
 // #define DEFAULT_SERVER_PORT 3000
 
@@ -73,8 +74,8 @@ extern int ElectPinArray[9];
 /************************* Build Flags ***************************/
 
 #define MOCK_FLAG 0
-#define DEBUG_MODE 2  // 0 = Disabled, 1 = Regular Serial, 2 = Teleplot
-#define SD_ENABLED   1    // 0 = Disable SD card init + logging, 1 = Enabled
+#define DEBUG_MODE 1  // 0 = Disabled, 1 = Regular Serial, 2 = Teleplot
+#define SD_ENABLED   1     // 0 = Disable SD card init + logging, 1 = Enabled
 #define WIFI_ENABLED 0    // 0   = Disable WiFi init (also disables WS), 1 = Enabled
 #define calibrate_RTC 0
 #define TIME_SRC 0 // 0 = RTC , 1 = WiFI NTP Pool
@@ -91,14 +92,13 @@ const float max_volt5 =  5.0;
 const float max_volt12 =  12.0;
 const float max_volt24 =  24.0;  // Fixed: was 5.0, should be 24.0
 
-// Pedal travel distance (APPS/BPPS)
-const float apps_max_dist_mm =  75.00;  
-const float apps_offset_mm = 0.0;       
-const float bpps_max_dist_mm =  75.00;  
-const float bpps_offset_mm = 0.0;       
+// Pedal travel distance (APPS/BPPS) 
+const float apps_offset_v = 0.5;       
+const float bpps_offset_v = 0.0;       
+const float steering_aref = 1.9;
+// const float steering_aref = 1.95;
 const float steering_max__angle = 200.00 ;
 const float steering_offset_angle =  0.00;
-
 
 // NTC thermistor in voltage divider config
 const uint16_t tmp_series_res = 10000;  // 10k ohm series res

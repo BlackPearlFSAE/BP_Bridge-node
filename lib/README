@@ -1,4 +1,16 @@
+## Custom Libraries
 
+| Library | What It Does |
+|---------|-------------|
+| **BP_mobile_util** | WebSocket client — connect, reconnect, topic register, publish. |
+| **WIFI32_util** | WiFi connect, optional connection to NTP server to sync ESP32 Clock with world time. |
+| **SD32_util** | CSV logging — open/flush/close, file naming, directory management. |
+| **syncTime_util** | A helper library to deal with sub-second timestamps from a 1 s RTC tick: records a `millis()` sync point and interpolates ms elapsed; recalibrates when drift exceeds 1 s. |
+| **CAN32_util** | Thin wrapper around ESP32 TWAI driver with debug helpers. |
+| **DS3231_util** | DS3231 RTC read/set, format to Unix timestamp . |
+| **ams_data_util** | `BMUdata`/`AMSdata`/`OBCdata` structs and CAN frame parser for BMU messages. [Details](https://docs.google.com/spreadsheets/d/12pS13Plre9t67ogZUqtdaa3BjL8dEgXgRLJaQJvscLw/edit?usp=sharing)|
+
+<!--
 This directory is intended for project specific (private) libraries.
 PlatformIO will compile them to static libraries and link into the executable file.
 
@@ -21,7 +33,7 @@ For example, see the structure of the following example libraries `Foo` and `Bar
 |  |  |- Foo.c
 |  |  |- Foo.h
 |  |
-|  |- README --> THIS FILE
+|  |- README -> THIS FILE
 |
 |- platformio.ini
 |--src
@@ -44,3 +56,6 @@ libraries by scanning project source files.
 
 More information about PlatformIO Library Dependency Finder
 - https://docs.platformio.org/page/librarymanager/ldf.html
+
+
+-->
