@@ -319,7 +319,7 @@ void setup() {
   if (WiFi.status() == WL_CONNECTED) {
     BPMobile.setClientName(clientName);
     BPMobile.setRegisterCallback(registerClient);
-    BPMobile.initWebSocketSSL(serverHost, serverPort, clientName);
+    BPMobile.initWebSocketSSL(serverHost, serverPort, clientName, DEFAULT_WS_PATH);
   }
   #elif WS_ENABLED == 0
   Serial.println("[WS] Disabled (WS_ENABLED=0)");

@@ -66,6 +66,7 @@ extern int ElectPinArray[9];
 
 #define DEFAULT_CLIENT_NAME "ESP32"
 #define DEFAULT_PUBLISH_RATE 5.0
+#define DEFAULT_WS_PATH "/ws"
 
 // Time sync handling
 #define DEFAULT_LOCAL_SYNC_INTERVAL 1000

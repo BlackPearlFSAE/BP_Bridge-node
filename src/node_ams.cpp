@@ -36,7 +36,6 @@
 #include "shared_config.h"
 
 /************************* Pin Definitions ***************************/
-
 // WebSocket and Network config
 const char* ssid = DEFAULT_SSID;
 const char* password = DEFAULT_PASSWORD;
@@ -83,6 +82,31 @@ const unsigned long TELEPLOT_DEBUG_INTERVAL = 200;
 int dataPoint = 1;
 int sessionNumber = 0;
 
+// CAN-related variables
+unsigned long lastModuleResponse[MODULE_NUM] = {0};
+
+// CAN ID decoding structures and functions
+struct extCANIDDecoded {
+  uint8_t PRIORITY;
+  uint8_t MSG_NUM;
+  uint8_t SRC;
+};
+
+void decodeExtendedCANID(extCANIDDecoded* decoded, uint32_t identifier) {
+  // Decode extended CAN ID according to AMS protocol
+  // BCU_ADD = 0x18000000
+  // PRIORITY: bits 26-28
+  // MSG_NUM: bits 16-25  
+  // SRC: bits 0-15
+  decoded->PRIORITY = (identifier >> 26) & 0x07;
+  decoded->MSG_NUM = (identifier >> 16) & 0xFF;
+  decoded->SRC = identifier & 0xFFFF;
+}
+
+uint16_t mergeHLbyte(uint8_t high, uint8_t low) {
+  return (high << 8) | low;
+}
+
 // SD Card
 char sessionDirPath[48] = {0};
 char partDirPath[64] = {0};
@@ -97,14 +121,13 @@ const char* header_BMU = "DataPoint,UnixTime,SessionTime,V_MODULE,TEMP1,TEMP2,DV
 // Sensor Data
 BMUdata BMU_Package[MODULE_NUM];
 
-
 /************************* Function Declarations ***************************/
 
 // BPMobile Publishers
 void publishBMUcells(BMUdata* bmu, int moduleNum);
 void publishBMUfaults(BMUdata* bmu, int moduleNum);
 void registerClient(const char* clientName);
-
+void process_BMU_CANmsg(twai_message_t *receivedframe, BMUdata *BMU_Package, int moduleNum);
 // File Management
 void showDeviceStatus();
 void append_BMU_toCSVFile(File& dataFile, BMUdata* bmu, int dp, uint64_t Timestamp, uint64_t session);
@@ -298,7 +321,6 @@ void canTask(void* parameter) {
         xSemaphoreGive(dataMutex);
       }
     }
-
     vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(BMS_RX_INTERVAL));
   }
 }
@@ -352,7 +374,7 @@ void setup() {
   if (WiFi.status() == WL_CONNECTED) {
     BPMobile.setClientName(clientName);
     BPMobile.setRegisterCallback(registerClient);
-    BPMobile.initWebSocketSSL(serverHost, serverPort, clientName);
+    BPMobile.initWebSocketSSL(serverHost, serverPort, clientName, DEFAULT_WS_PATH);
   }
   #elif WS_ENABLED == 0
   Serial.println("[WS] Disabled (WS_ENABLED=0)");
@@ -490,6 +512,64 @@ void loop() {
 
   vTaskDelay(pdMS_TO_TICKS(20));
 }
+
+void process_BMU_CANmsg(twai_message_t *receivedframe, BMUdata *BMU_Package, int moduleNum) {
+  extCANIDDecoded decodedCANID;
+  decodeExtendedCANID(&decodedCANID, receivedframe->identifier);
+
+  int i = decodedCANID.SRC - 1;
+  if (i < 0 || i >= moduleNum) return;
+
+  // Update timestamp and ID
+  lastModuleResponse[i] = millis();
+  BMU_Package[i].BMU_ID = receivedframe->identifier;
+
+  // Priority 0x02: BMU module & cell data
+  if (decodedCANID.PRIORITY == 0x02) {
+    switch (decodedCANID.MSG_NUM) {
+      case 1:  // Operation status
+        BMU_Package[i].BMUneedBalance = receivedframe->data[0];
+        BMU_Package[i].BalancingDischarge_Cells = mergeHLbyte(receivedframe->data[1], receivedframe->data[2]);
+        BMU_Package[i].DV = receivedframe->data[3];
+        BMU_Package[i].TEMP_SENSE[0] = mergeHLbyte(receivedframe->data[4],
+                                                    receivedframe->data[5]);
+        BMU_Package[i].TEMP_SENSE[1] = mergeHLbyte(receivedframe->data[6],
+                                                    receivedframe->data[7]);
+        break;
+
+      case 2:  // Cell voltages C1-C8
+        for (int j = 0; j < CELL_NUM - 2; j++) {
+          BMU_Package[i].V_CELL[j] = receivedframe->data[j];
+        }
+        break;
+
+      case 3:  // Cell voltages C9-C10
+        for (int j = CELL_NUM-2; j < CELL_NUM; j++) {
+          BMU_Package[i].V_CELL[j] = receivedframe->data[j - 8];
+        }
+        break;
+    }
+  }
+  // Priority 0x01: Fault codes
+  else if (decodedCANID.PRIORITY == 0x01) {
+    switch (decodedCANID.MSG_NUM) {
+      case 1:
+        BMU_Package[i].OVERVOLTAGE_WARNING = mergeHLbyte(receivedframe->data[0], receivedframe->data[1]);
+        BMU_Package[i].OVERVOLTAGE_CRITICAL = mergeHLbyte(receivedframe->data[2], receivedframe->data[3]);
+        BMU_Package[i].LOWVOLTAGE_WARNING = mergeHLbyte(receivedframe->data[4], receivedframe->data[5]);
+        BMU_Package[i].LOWVOLTAGE_CRITICAL = mergeHLbyte(receivedframe->data[6], receivedframe->data[7]);
+        break;
+
+      case 2:
+        BMU_Package[i].OVERTEMP_WARNING = mergeHLbyte(receivedframe->data[0], receivedframe->data[1]);
+        BMU_Package[i].OVERTEMP_CRITICAL = mergeHLbyte(receivedframe->data[2], receivedframe->data[3]);
+        BMU_Package[i].OVERDIV_VOLTAGE_WARNING = mergeHLbyte(receivedframe->data[4], receivedframe->data[5]);
+        BMU_Package[i].OVERDIV_VOLTAGE_CRITICAL = mergeHLbyte(receivedframe->data[6], receivedframe->data[7]);
+        break;
+    }
+  }
+}
+
 
 /************************* File Management ***************************/
 

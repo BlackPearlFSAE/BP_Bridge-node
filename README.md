@@ -53,12 +53,12 @@ Quite bloated; it can be improved, see critique on this design on [Design critiq
 
 **ESP32-S2**, **ESP32-C3**: Single-core chips. no parallel task capability; sensor and comms tasks share threads. Untested.
 
-The boards used during TSAE 2026 development and testing are custom PCB [here](Links)
+The boards used during TSAE 2026 development and testing are custom PCB [here](https://github.com/BlackPearlFSAE/Bridge-PCB)
 
 ---
 ### 2. Build & Upload
 Project are written and built with PlatformIO IDE<br>
-Install it in vscode [here](https://platformio.org/install/ide?install=vscode)<br> 
+Install it as vscode extension<br> 
 Or install the shell command into your terminal [here](https://docs.platformio.org/en/latest/core/installation/index.html)
 
 ```bash
@@ -142,7 +142,8 @@ Make one Node a Master unit that only log and stream raw CAN frames --the receiv
 #### Reduce Hardware size
 
 Minimise GPIO count per MCU, silkscreen pin assignments directly on the PCB, and size each node's peripherals to its physical region of the car.<br>
-[Example PCB layout](Link)
+[Example PCB layout](https://github.com/BlackPearlFSAE/Bridge-PCB)
+<!-- This is still the old PCB, I need to update to new one that show the concept -->
 
 
 ## Related Docs

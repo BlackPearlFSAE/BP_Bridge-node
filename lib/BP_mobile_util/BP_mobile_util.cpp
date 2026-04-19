@@ -34,7 +34,7 @@ void BPMobileConfig::syncMCUtime_with_provider(uint64_t time){
             _timesourceProvider_fn(time); 
     }
 
-void BPMobileConfig::initWebSocketSSL(const char* serverHost, const int serverPort, const char* clientName) {
+void BPMobileConfig::initWebSocketSSL(const char* serverHost, const int serverPort, const char* clientName, const char* path) {
   // Serial mutex protected prints (initWebSocket called from setup, but good practice)
   if (serialMutex && xSemaphoreTake(serialMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
     Serial.println("--- WebSocket SSL Initialization ---");
@@ -49,7 +49,7 @@ void BPMobileConfig::initWebSocketSSL(const char* serverHost, const int serverPo
   this->webSocket->setReconnectInterval(5000);
 
   // Begin WS (No SSL)
-  this->webSocket->beginSSL(serverHost, serverPort, "/");
+  this->webSocket->beginSSL(serverHost, serverPort, path);
 
   if (this->webSocketstatus != nullptr) {
     this->webSocketstatus->connectionStartTime = millis();
@@ -60,7 +60,7 @@ void BPMobileConfig::initWebSocketSSL(const char* serverHost, const int serverPo
 
 }
 
-void BPMobileConfig::initWebSocket(const char* serverHost, const int serverPort, const char* clientName) {
+void BPMobileConfig::initWebSocket(const char* serverHost, const int serverPort, const char* clientName, const char* path) {
   // Serial mutex protected prints (initWebSocket called from setup, but good practice)
   if (serialMutex && xSemaphoreTake(serialMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
     Serial.println("--- WebSocket Initialization ---");
@@ -75,7 +75,7 @@ void BPMobileConfig::initWebSocket(const char* serverHost, const int serverPort,
   this->webSocket->setReconnectInterval(5000);
 
   // Begin WS (No SSL)
-  this->webSocket->begin(serverHost, serverPort, "/");
+  this->webSocket->begin(serverHost, serverPort, path);
 
   if (this->webSocketstatus != nullptr) {
     this->webSocketstatus->connectionStartTime = millis();

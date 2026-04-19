@@ -51,6 +51,6 @@ public:
     void registerMCUTopic();
     void syncMCUtime_with_provider(uint64_t time);
 
-    void initWebSocket(const char* serverHost, int serverPort, const char* clientName);
-    void initWebSocketSSL(const char* serverHost, int serverPort, const char* clientName);
+    void initWebSocket(const char* serverHost, int serverPort, const char* clientName, const char* path = "/");
+    void initWebSocketSSL(const char* serverHost, int serverPort, const char* clientName, const char* path = "/");
 };
