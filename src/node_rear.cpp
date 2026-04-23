@@ -21,7 +21,10 @@
 #include <ArduinoJson.h>
 #include <RTClib.h>
 #include <time.h>
-#include <MPU6050_light.h>
+// #include <MPU6050_light.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BNO055.h>
+#include <utility/imumaths.h>
 #include <TinyGPS++.h>
 
 #include "freertos/FreeRTOS.h"
@@ -64,7 +67,8 @@ Odometry myOdometryData;
 // Peripherals
 HardwareSerial gpsSerial(1);
 TinyGPSPlus gps;
-MPU6050 mpu(Wire);
+// MPU6050 mpu(Wire);
+Adafruit_BNO055 myimu = Adafruit_BNO055(55, 0x28, &Wire);
 RTC_DS3231 rtc;
 hw_timer_t* My_timer = nullptr;
 
@@ -99,7 +103,7 @@ char csvFilename[48] = {0};
 int fileIndex = 0;
 const char* header_Timestamp = "DataPoint,UnixTime,SessionTime";
 const char* header_Mechanical = "Wheel_RPM_Left,Wheel_RPM_Right,Heave_mm,Roll_mm";
-const char* header_Odometry = "GPS_Lat,GPS_Lng,GPS_Age,GPS_Course,GPS_Speed,IMU_AccelX,IMU_AccelY,IMU_AccelZ,IMU_GyroX,IMU_GyroY,IMU_GyroZ";
+const char* header_Odometry = "GPS_Lat,GPS_Lng,GPS_Age,GPS_Course,GPS_Speed,IMU_AccelX,IMU_AccelY,IMU_AccelZ,IMU_GyroX,IMU_GyroY,IMU_GyroZ,IMU_EulerRoll,IMU_EulerPitch,IMU_EulerYaw,IMU_MagX,IMU_MagY,IMU_MagZ,IMU_GravX,IMU_GravY,IMU_GravZ";
 char csvHeaderBuffer[350] = "";
 int appenderCount = 5;
 
@@ -269,7 +273,7 @@ void sensorTask(void* parameter) {
       // RPMsensorUpdate(&localMech, RPM_CalcInterval, ENCODER_N);
       StrokesensorUpdate(&localMech, STR_Heave, STR_Roll);
       GPSupdate(&localOdom, gpsSerial, gps, GPSavailable);
-      IMUupdate(&localOdom, mpu, IMUavailable);
+      IMUupdate(&localOdom, myimu, IMUavailable);
     #else
       mockMechanicalData(&localMech);
       mockOdometryData(&localOdom);
@@ -311,9 +315,9 @@ void setup() {
   }
 
   // Motion Sensor Init
-  IMUavailable = IMUinit(&Wire, mpu);
+  IMUavailable = IMUinit(&Wire, myimu);
   delay(1000);
-  IMUcalibrate(mpu, IMUavailable);
+  IMUcalibrate(myimu, IMUavailable);
   GPSavailable = GPSinit(gpsSerial, GPS_TX_PIN, GPS_RX_PIN, GPS_BAUD);
 
   // Base Sensor Init
@@ -435,7 +439,7 @@ void loop() {
     }
     #if DEBUG_MODE == 1
       Serial.printf("[DEBUG] Mech: RPM_L=%.1f RPM_R=%.1f\n", debugMech.Wheel_RPM_L, debugMech.Wheel_RPM_R);
-      Serial.printf("[DEBUG] Odom: GPS(%.3f,%.3f) IMU(%.2f,%.2f,%.2f)\n",
+      Serial.printf("[DEBUG] Odom: GPS(%.2f,%.2f) IMU(%.2f,%.2f,%.2f)\n",
         debugOdom.gps_lat, debugOdom.gps_lng,
         debugOdom.imu_accelx, debugOdom.imu_accely, debugOdom.imu_accelz);
     #elif DEBUG_MODE == 2
@@ -532,6 +536,15 @@ void publishOdometryData(Odometry* OdomSensors) {
   doc["d"]["imu_gyro_x"]  = OdomSensors->imu_gyrox;
   doc["d"]["imu_gyro_y"]  = OdomSensors->imu_gyroy;
   doc["d"]["imu_gyro_z"]  = OdomSensors->imu_gyroz;
+  doc["d"]["imu_euler_roll"]  = OdomSensors->imu_euler_roll;
+  doc["d"]["imu_euler_pitch"] = OdomSensors->imu_euler_pitch;
+  doc["d"]["imu_euler_yaw"]   = OdomSensors->imu_euler_yaw;
+  doc["d"]["imu_mag_x"]   = OdomSensors->imu_magx;
+  doc["d"]["imu_mag_y"]   = OdomSensors->imu_magy;
+  doc["d"]["imu_mag_z"]   = OdomSensors->imu_magz;
+  doc["d"]["imu_grav_x"]  = OdomSensors->imu_gravx;
+  doc["d"]["imu_grav_y"]  = OdomSensors->imu_gravy;
+  doc["d"]["imu_grav_z"]  = OdomSensors->imu_gravz;
   String msg;
   serializeJson(doc, msg);
   BPwebSocket->sendTXT(msg);
@@ -570,6 +583,15 @@ void registerClient(const char* clientName) {
   addEntry("rear.odom.imu_gyro_x",   "float",  "deg/s", "rear.odom");
   addEntry("rear.odom.imu_gyro_y",   "float",  "deg/s", "rear.odom");
   addEntry("rear.odom.imu_gyro_z",   "float",  "deg/s", "rear.odom");
+  addEntry("rear.odom.imu_euler_roll",  "float",  "deg",  "rear.odom");
+  addEntry("rear.odom.imu_euler_pitch", "float",  "deg",  "rear.odom");
+  addEntry("rear.odom.imu_euler_yaw",   "float",  "deg",  "rear.odom");
+  addEntry("rear.odom.imu_mag_x",    "float",  "uT",    "rear.odom");
+  addEntry("rear.odom.imu_mag_y",    "float",  "uT",    "rear.odom");
+  addEntry("rear.odom.imu_mag_z",    "float",  "uT",    "rear.odom");
+  addEntry("rear.odom.imu_grav_x",   "float",  "m/s2",  "rear.odom");
+  addEntry("rear.odom.imu_grav_y",   "float",  "m/s2",  "rear.odom");
+  addEntry("rear.odom.imu_grav_z",   "float",  "m/s2",  "rear.odom");
 
   String registration;
   serializeJson(doc, registration);
@@ -621,17 +643,35 @@ void append_OdometryData_toCSVFile(File& dataFile, void* data) {
   dataFile.print(",");
   dataFile.print(o->gps_speed, 2);
   dataFile.print(",");
-  dataFile.print(o->imu_accelx, 3);
+  dataFile.print(o->imu_accelx, 2);
   dataFile.print(",");
-  dataFile.print(o->imu_accely, 3);
+  dataFile.print(o->imu_accely, 2);
   dataFile.print(",");
-  dataFile.print(o->imu_accelz, 3);
+  dataFile.print(o->imu_accelz, 2);
   dataFile.print(",");
-  dataFile.print(o->imu_gyrox, 3);
+  dataFile.print(o->imu_gyrox, 2);
   dataFile.print(",");
-  dataFile.print(o->imu_gyroy, 3);
+  dataFile.print(o->imu_gyroy, 2);
   dataFile.print(",");
-  dataFile.print(o->imu_gyroz, 3);
+  dataFile.print(o->imu_gyroz, 2);
+  dataFile.print(",");
+  dataFile.print(o->imu_euler_roll, 2);
+  dataFile.print(",");
+  dataFile.print(o->imu_euler_pitch, 2);
+  dataFile.print(",");
+  dataFile.print(o->imu_euler_yaw, 2);
+  dataFile.print(",");
+  dataFile.print(o->imu_magx, 2);
+  dataFile.print(",");
+  dataFile.print(o->imu_magy, 2);
+  dataFile.print(",");
+  dataFile.print(o->imu_magz, 2);
+  dataFile.print(",");
+  dataFile.print(o->imu_gravx, 2);
+  dataFile.print(",");
+  dataFile.print(o->imu_gravy, 2);
+  dataFile.print(",");
+  dataFile.print(o->imu_gravz, 2);
 }
 
 /************************* Debug Functions ***************************/
