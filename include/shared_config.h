@@ -38,17 +38,15 @@ extern int ElectPinArray[9];
 // Motion Sensors
 #define GPS_RX_PIN 2
 #define GPS_TX_PIN 1
-// #define IMU_SDA 42
-// #define IMU_SCL 41
-#define IMU_SDA 9
-#define IMU_SCL 8
+#define IMU_SDA 42
+#define IMU_SCL 41
+// #define IMU_SDA 9
+// #define IMU_SCL 8
 #define GPS_BAUD 9600
 
 // can bus
 #define CAN_TX_PIN 48
 #define CAN_RX_PIN 47
-
-// 
 
 // SD card Datalog config
 #define DEFAULT_SD_LOG_INTERVAL 200 // 0.2 sec write
@@ -78,8 +76,8 @@ extern int ElectPinArray[9];
 
 /************************* Build Flags ***************************/
 
-#define MOCK_FLAG 1
-#define DEBUG_MODE 1  // 0 = Disabled, 1 = Regular Serial, 2 = Teleplot
+#define MOCK_FLAG 0
+#define DEBUG_MODE 2  // 0 = Disabled, 1 = Regular Serial, 2 = Teleplot
 #define SD_ENABLED   1     // 0 = Disable SD card init + logging, 1 = Enabled
 #define WIFI_ENABLED 0    // 0   = Disable WiFi init (also disables WS), 1 = Enabled
 #define calibrate_RTC 0
