@@ -36,7 +36,7 @@ void GPSupdate(Odometry *mygps, HardwareSerial &gpsSerial, TinyGPSPlus &gps,bool
         Serial.println(F("INVALID"));
       }
     }
-  }  
+  }
 }
 
 // --- Old MPU6050 implementation (kept for reference) ---
@@ -181,6 +181,22 @@ void mockOdometryData(Odometry *OdomSensors) {
   OdomSensors->imu_gravx = random(-100, 100) / 100.0;
   OdomSensors->imu_gravy = random(-100, 100) / 100.0;
   OdomSensors->imu_gravz = 9.81 + random(-50, 50) / 100.0;
+}
+
+// --- IMU SERIAL PRINT (human-readable, for testing) ---
+void printIMU(Odometry *OdomSensors) {
+  Serial.println("===== BNO055 IMU =====");
+  Serial.printf("  Accel  X=%.3f  Y=%.3f  Z=%.3f  m/s2\n",
+    OdomSensors->imu_accelx, OdomSensors->imu_accely, OdomSensors->imu_accelz);
+  Serial.printf("  Gyro   X=%.3f  Y=%.3f  Z=%.3f  deg/s\n",
+    OdomSensors->imu_gyrox,  OdomSensors->imu_gyroy,  OdomSensors->imu_gyroz);
+  Serial.printf("  Euler  Roll=%.2f  Pitch=%.2f  Yaw=%.2f  deg\n",
+    OdomSensors->imu_euler_roll, OdomSensors->imu_euler_pitch, OdomSensors->imu_euler_yaw);
+  Serial.printf("  Mag    X=%.2f  Y=%.2f  Z=%.2f  uT\n",
+    OdomSensors->imu_magx, OdomSensors->imu_magy, OdomSensors->imu_magz);
+  Serial.printf("  Grav   X=%.3f  Y=%.3f  Z=%.3f  m/s2\n",
+    OdomSensors->imu_gravx, OdomSensors->imu_gravy, OdomSensors->imu_gravz);
+  Serial.println("======================");
 }
 
 // --- TELEPLOT DEBUG FUNCTION ---

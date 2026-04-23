@@ -22,12 +22,14 @@ typedef struct{
   float canVoltage = 0.0;      // DC Link Voltage from CAN
   float canCurrent = 0.0;      // Motor Current from CAN
   float power = 0.0;           // Calculated power (V * I)
+  float rpm = 0.0;             // Actual motor speed (signed, raw counts)
 
   // Data validity flags
   bool motorTempValid = false;
   bool controllerTempValid = false;
   bool canVoltageValid = false;
   bool canCurrentValid = false;
+  bool rpmValid = false;
 } BAMOCar;
 
 // CAN Bus functions

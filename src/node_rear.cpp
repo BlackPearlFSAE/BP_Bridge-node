@@ -294,7 +294,9 @@ void sensorTask(void* parameter) {
 void setup() {
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
   Serial.begin(UART0_BAUD);
-
+  Serial.setTxTimeoutMs(0);   // USB CDC: don't block setup() if host isn't reading
+  delay(1000);  // Allow time for peripherals to power up
+  Serial.println(">>setup here");
   // I2C Init
   I2C1_connect = Wire1.begin(I2C1_SDA, I2C1_SCL);
   I2C2_connect = Wire.begin(IMU_SDA, IMU_SCL);
@@ -438,10 +440,7 @@ void loop() {
       xSemaphoreGive(dataMutex);
     }
     #if DEBUG_MODE == 1
-      Serial.printf("[DEBUG] Mech: RPM_L=%.1f RPM_R=%.1f\n", debugMech.Wheel_RPM_L, debugMech.Wheel_RPM_R);
-      Serial.printf("[DEBUG] Odom: GPS(%.2f,%.2f) IMU(%.2f,%.2f,%.2f)\n",
-        debugOdom.gps_lat, debugOdom.gps_lng,
-        debugOdom.imu_accelx, debugOdom.imu_accely, debugOdom.imu_accelz);
+      printIMU(&debugOdom);
     #elif DEBUG_MODE == 2
       teleplotMechanical(&debugMech);
       teleplotOdometry(&debugOdom);

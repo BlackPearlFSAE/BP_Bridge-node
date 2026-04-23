@@ -119,6 +119,20 @@ void process_ResponseBamocarMsg(twai_message_t* msg, BAMOCar* bamocar) {
       }
     }
 
+    // === ACTUAL SPEED / RPM (Register 0x30) ===
+    else if (regAddress == BAMOCAR_REG_SPEED_ACTUAL) {
+      // Signed 16-bit: full scale ±32767 = ±N_max (controller-configured max RPM).
+      // Raw value is used directly — scale against known max RPM if needed.
+      bamocar->rpm = (float)(int16_t)rawValue;
+      bamocar->rpmValid = true;
+
+      Serial.print("[CAN DECODED] RPM: ");
+      Serial.print(bamocar->rpm, 0);
+      Serial.print(" (raw: ");
+      Serial.print((int16_t)rawValue);
+      Serial.println(")");
+    }
+
     // === UNKSESSION_TIMEN REGISTER ===
     else {
       Serial.print("[CAN] UnkSESSION_TIMEn register 0x");
@@ -364,6 +378,10 @@ void mockBAMOCarData(BAMOCar *BamoCar) {
 
   // Calculated power (V * I)
   BamoCar->power = BamoCar->canVoltage * BamoCar->canCurrent;
+
+  // Motor speed (raw signed counts, ±32767 = ±N_max)
+  BamoCar->rpm = 3000.0 + random(-500, 1500);
+  BamoCar->rpmValid = true;
 }
 
 // --- TELEPLOT DEBUG FUNCTION ---
@@ -373,4 +391,5 @@ void teleplotBAMOCar(BAMOCar *BamoCar) {
   Serial.printf(">BAMO_Power:%.2f\n", BamoCar->power);
   Serial.printf(">BAMO_MotorTemp:%.1f\n", BamoCar->motorTemp2);
   Serial.printf(">BAMO_CtrlTemp:%.1f\n", BamoCar->controllerTemp);
+  Serial.printf(">BAMO_RPM:%.0f\n", BamoCar->rpm);
 }

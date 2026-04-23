@@ -48,5 +48,5 @@ void IMUupdate(Odometry* myimu, Adafruit_BNO055 &bno, bool &AvailableFlag);
 
 void mockOdometryData(Odometry *OdomSensors);
 
-// Teleplot debug function
+void printIMU(Odometry *OdomSensors);
 void teleplotOdometry(Odometry *OdomSensors);

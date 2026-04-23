@@ -87,7 +87,7 @@ char sessionDirPath[48] = {0};
 char csvFilename[48] = {0};
 int fileIndex = 0;
 const char* header_Timestamp = "DataPoint,UnixTime,SessionTime";
-const char* header_BAMO = "BAMOVolt(V),BAMOAmp(A),BAMOPower(W),MotorTemp(C),BAMOTemp(C)";
+const char* header_BAMO = "BAMOVolt(V),BAMOAmp(A),BAMOPower(W),MotorTemp(C),BAMOTemp(C),RPM";
 char csvHeaderBuffer[256] = "";
 int appenderCount = 4;
 
@@ -267,12 +267,13 @@ void canTask(void* parameter) {
         case 1: pack_RequestBamocarMsg(&txmsg, BAMOCAR_REG_CONTROLLER_TEMP); break;
         case 2: pack_RequestBamocarMsg(&txmsg, BAMOCAR_REG_DC_VOLTAGE); break;
         case 3: pack_RequestBamocarMsg(&txmsg, BAMOCAR_REG_DC_CURRENT); break;
+        case 4: pack_RequestBamocarMsg(&txmsg, BAMOCAR_REG_SPEED_ACTUAL); break;
       }
       int txResult = CAN32_sendCAN(&txmsg);
       Serial.printf("[CAN TX] ID=0x%03X REG=0x%02X (seq=%d) status=%s\n",
         txmsg.identifier, txmsg.data[1], requestSeq,
         txResult == ESP_OK ? "OK" : "FAIL");
-      requestSeq = (requestSeq + 1) % 4;
+      requestSeq = (requestSeq + 1) % 5;
       lastRequest = SESSION_TIME;
     }
 
@@ -300,7 +301,7 @@ void setup() {
 
   // CAN Bus Init
   canBusReady = CAN32_initCANBus(CAN_TX_PIN, CAN_RX_PIN,
-    TWAI_TIMING_CONFIG_500KBITS(), TWAI_FILTER_CONFIG_ACCEPT_ALL());
+    TWAI_TIMING_CONFIG_250KBITS(), TWAI_FILTER_CONFIG_ACCEPT_ALL());
 
   // RTC Init
   RTCavailable = RTCinit(rtc, &Wire1);
@@ -505,8 +506,10 @@ void publishBAMOpower(BAMOCar* bamocar) {
   doc["d"]["canVoltage"]      = bamocar->canVoltage;
   doc["d"]["canCurrent"]      = bamocar->canCurrent;
   doc["d"]["power"]           = bamocar->power;
+  doc["d"]["rpm"]             = bamocar->rpm;
   doc["d"]["canVoltageValid"] = bamocar->canVoltageValid;
   doc["d"]["canCurrentValid"] = bamocar->canCurrentValid;
+  doc["d"]["rpmValid"]        = bamocar->rpmValid;
   String msg;
   serializeJson(doc, msg);
   BPwebSocket->sendTXT(msg);
@@ -545,11 +548,13 @@ void registerClient(const char* clientName) {
     e["key"] = key; e["type"] = type; e["unit"] = unit; e["scale"] = scale; e["offset"] = offset; e["group"] = group;
   };
 
-  addEntry("bamo.power.canVoltage",      "float", "V", "bamo.power");
-  addEntry("bamo.power.canCurrent",      "float", "A", "bamo.power");
-  addEntry("bamo.power.power",           "float", "W", "bamo.power");
-  addEntry("bamo.power.canVoltageValid", "bool",  "",  "bamo.power");
-  addEntry("bamo.power.canCurrentValid", "bool",  "",  "bamo.power");
+  addEntry("bamo.power.canVoltage",      "float", "V",   "bamo.power");
+  addEntry("bamo.power.canCurrent",      "float", "A",   "bamo.power");
+  addEntry("bamo.power.power",           "float", "W",   "bamo.power");
+  addEntry("bamo.power.rpm",             "float", "RPM", "bamo.power");
+  addEntry("bamo.power.canVoltageValid", "bool",  "",    "bamo.power");
+  addEntry("bamo.power.canCurrentValid", "bool",  "",    "bamo.power");
+  addEntry("bamo.power.rpmValid",        "bool",  "",    "bamo.power");
   addEntry("bamo.temp.motorTemp",        "float", "C", "bamo.temp");
   addEntry("bamo.temp.controllerTemp",   "float", "C", "bamo.temp");
   addEntry("bamo.temp.motorTempValid",   "bool",  "",  "bamo.temp");
@@ -592,6 +597,8 @@ void append_BAMOdata_toCSVFile(File& dataFile, void* data) {
   dataFile.print(b->motorTempValid ? b->motorTemp2 : 0.0, 1);
   dataFile.print(",");
   dataFile.print(b->controllerTempValid ? b->controllerTemp : 0.0, 1);
+  dataFile.print(",");
+  dataFile.print(b->rpmValid ? b->rpm : 0.0, 0);
 }
 
 /************************* Debug Functions ***************************/
