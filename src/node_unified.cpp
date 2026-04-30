@@ -230,12 +230,25 @@ void BPMobileTask(void* parameter) {
         xSemaphoreGive(dataMutex);
       }
 
-      if (now - tMech       >= (1000.0 / MECH_SENSORS_SAMPLING_RATE))      { publishMechData(&localMech);          tMech = now; }
-      if (now - tElect      >= (1000.0 / ELECT_SENSORS_SAMPLING_RATE))     { publishElectData(&localElect);        tElect = now; }
-      if (now - tElectFault >= (1000.0 / ELECT_FAULT_STAT_SAMPLING_RATE))  { publishElectFaultState(&localElect);  tElectFault = now; }
-      if (now - tOdom       >= (1000.0 / ODOM_SENSORS_SAMPLING_RATE))      { publishOdometryData(&localOdom);      tOdom = now; }
-      if (now - tBAMOpow    >= (1000.0 / BAMO_POWER_SAMPLING_RATE))        { publishBAMOpower(&localBAMO);         tBAMOpow = now; }
-      if (now - tBAMOtemp   >= (1000.0 / BAMO_TEMP_SAMPLING_RATE))         { publishBAMOtemp(&localBAMO);          tBAMOtemp = now; }
+      bool isFront = strcmp(clientName, "front") == 0;
+      bool isRear  = strcmp(clientName, "rear")  == 0;
+
+      // mech: both nodes
+      if (now - tMech >= (1000.0 / MECH_SENSORS_SAMPLING_RATE))  
+      publishMechData(&localMech); tMech = now;
+
+      // elect + faults + bamo: front only
+      if (isFront) {
+        if (now - tElect      >= (1000.0 / ELECT_SENSORS_SAMPLING_RATE))    { publishElectData(&localElect);       tElect = now; }
+        if (now - tElectFault >= (1000.0 / ELECT_FAULT_STAT_SAMPLING_RATE)) { publishElectFaultState(&localElect); tElectFault = now; }
+        if (now - tBAMOpow    >= (1000.0 / BAMO_POWER_SAMPLING_RATE))       { publishBAMOpower(&localBAMO);        tBAMOpow = now; }
+        if (now - tBAMOtemp   >= (1000.0 / BAMO_TEMP_SAMPLING_RATE))        { publishBAMOtemp(&localBAMO);         tBAMOtemp = now; }
+      }
+
+      // odom: rear only
+      if (isRear) {
+        if (now - tOdom >= (1000.0 / ODOM_SENSORS_SAMPLING_RATE)) { publishOdometryData(&localOdom); tOdom = now; }
+      }
     }
     vTaskDelay(pdMS_TO_TICKS(10));
   }
@@ -437,11 +450,15 @@ void setup() {
   #endif
 
   // WebSocket Init
-  #if WIFI_ENABLED == 1 && WS_ENABLED == 1
+  #if WIFI_ENABLED == 1 && (WS_ENABLED == 1 || WS_ENABLED == 2)
   if (WiFi.status() == WL_CONNECTED) {
     BPMobile.setClientName(clientName);
     BPMobile.setRegisterCallback(registerClient);
+    #if WS_ENABLED == 2
     BPMobile.initWebSocketSSL(serverHost, serverPort, clientName, DEFAULT_WS_PATH);
+    #else
+    BPMobile.initWebSocket(serverHost, serverPort, clientName, DEFAULT_WS_PATH);
+    #endif
   }
   #elif WS_ENABLED == 0
   Serial.println("[WS] Disabled (WS_ENABLED=0)");
@@ -480,7 +497,7 @@ void setup() {
   #endif
 
   // Core 0
-  #if WIFI_ENABLED == 1 && WS_ENABLED == 1
+  #if WIFI_ENABLED == 1 && (WS_ENABLED == 1 || WS_ENABLED == 2)
   xTaskCreatePinnedToCore(BPMobileTask, "BPMobileTask", 8192, NULL, 1, &BPMobileTaskHandle, 0);
   Serial.println("[RTOS] BPMobile task on Core 0 (pri 1)");
   #else
@@ -609,6 +626,7 @@ void publishMechData(Mechanical* m) {
   uint64_t timestamp = syncTime_calcRelative_ms(RTC_UNIX_TIME);
   JsonDocument doc;
   doc["type"]  = "data";
+  doc["node"]  = clientName;
   doc["group"] = "mech";
   doc["ts"]    = timestamp;
   doc["d"]["Wheel_RPM_L"]  = m->Wheel_RPM_L;
@@ -624,6 +642,7 @@ void publishElectData(Electrical* e) {
   uint64_t timestamp = syncTime_calcRelative_ms(RTC_UNIX_TIME);
   JsonDocument doc;
   doc["type"]  = "data";
+  doc["node"]  = clientName;
   doc["group"] = "elect";
   doc["ts"]    = timestamp;
   doc["d"]["I_SENSE"] = e->I_SENSE;
@@ -640,6 +659,7 @@ void publishElectFaultState(Electrical* e) {
   uint64_t timestamp = syncTime_calcRelative_ms(RTC_UNIX_TIME);
   JsonDocument doc;
   doc["type"]  = "data";
+  doc["node"]  = clientName;
   doc["group"] = "faults";
   doc["ts"]    = timestamp;
   doc["d"]["AMS_OK"]  = (bool)e->AMS_OK;
@@ -655,6 +675,7 @@ void publishOdometryData(Odometry* o) {
   uint64_t timestamp = syncTime_calcRelative_ms(RTC_UNIX_TIME);
   JsonDocument doc;
   doc["type"]  = "data";
+  doc["node"]  = clientName;
   doc["group"] = "odom";
   doc["ts"]    = timestamp;
   doc["d"]["gps_lat"]     = o->gps_lat;
@@ -686,6 +707,7 @@ void publishBAMOpower(BAMOCar* b) {
   uint64_t timestamp = syncTime_calcRelative_ms(RTC_UNIX_TIME);
   JsonDocument doc;
   doc["type"]  = "data";
+  doc["node"]  = clientName;
   doc["group"] = "bamo.power";
   doc["ts"]    = timestamp;
   doc["d"]["canVoltage"]      = b->canVoltage;
@@ -704,6 +726,7 @@ void publishBAMOtemp(BAMOCar* b) {
   uint64_t timestamp = syncTime_calcRelative_ms(RTC_UNIX_TIME);
   JsonDocument doc;
   doc["type"]  = "data";
+  doc["node"]  = clientName;
   doc["group"] = "bamo.temp";
   doc["ts"]    = timestamp;
   doc["d"]["motorTemp"]      = b->motorTemp2;
@@ -718,6 +741,7 @@ void publishBAMOtemp(BAMOCar* b) {
 void registerClient(const char* clientName) {
   JsonDocument doc;
   doc["type"] = "register";
+  doc["node"] = clientName;
   doc["client_name"] = clientName;
 
   JsonArray groups = doc["groups"].to<JsonArray>();

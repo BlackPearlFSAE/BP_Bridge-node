@@ -370,11 +370,15 @@ void setup() {
   #endif
 
   // WebSocket Init
-  #if WIFI_ENABLED == 1 && WS_ENABLED == 1
+  #if WIFI_ENABLED == 1 && (WS_ENABLED == 1 || WS_ENABLED == 2)
   if (WiFi.status() == WL_CONNECTED) {
     BPMobile.setClientName(clientName);
     BPMobile.setRegisterCallback(registerClient);
+    #if WS_ENABLED == 2
     BPMobile.initWebSocketSSL(serverHost, serverPort, clientName, DEFAULT_WS_PATH);
+    #else
+    BPMobile.initWebSocket(serverHost, serverPort, clientName, DEFAULT_WS_PATH);
+    #endif
   }
   #elif WS_ENABLED == 0
   Serial.println("[WS] Disabled (WS_ENABLED=0)");
@@ -408,7 +412,7 @@ void setup() {
   #endif
 
   // Core 0 tasks
-  #if WIFI_ENABLED == 1 && WS_ENABLED == 1
+  #if WIFI_ENABLED == 1 && (WS_ENABLED == 1 || WS_ENABLED == 2)
   xTaskCreatePinnedToCore(BPMobileTask, "BPMobileTask", 8192, NULL, 1, &BPMobileTaskHandle, 0);
   Serial.println("[RTOS] BPMobile task on Core 0 (pri 1)");
   #else

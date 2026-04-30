@@ -67,10 +67,10 @@ void ElectSensorsUpdate(Electrical* e, int* pins) {
   e->BPPS = (volt_bpps - bpps_offset_v) / max_volt5;
   e->steering = ((volt_steering / steering_aref) * steering_max__angle) - steering_offset_angle;
 
-  e->AMS_OK  = digitalRead(pins[4]);
-  e->IMD_OK  = digitalRead(pins[5]);
-  e->HV_ON   = digitalRead(pins[6]);
-  e->BSPD_OK = digitalRead(pins[7]);
+  e->AMS_OK  = (bool)digitalRead(pins[4]);
+  e->IMD_OK  = (bool)digitalRead(pins[5]);
+  e->HV_ON   = (bool)digitalRead(pins[6]);
+  e->BSPD_OK = (bool)digitalRead(pins[7]);
 }
 
 void mockElectricalData(Electrical* e) {
@@ -78,10 +78,10 @@ void mockElectricalData(Electrical* e) {
   e->TMP     = 45.0 + random(-10, 20);
   e->APPS    = 30.0 + random(-15, 30);
   e->BPPS    = 10.0 + random(-5, 15);
-  e->AMS_OK  = random(0, 10) > 1;
-  e->IMD_OK  = random(0, 10) > 1;
-  e->HV_ON   = random(0, 10) > 2;
-  e->BSPD_OK = random(0, 10) > 1;
+  e->AMS_OK  = (bool)random(0, 10) > 1;
+  e->IMD_OK  = (bool)random(0, 10) > 1;
+  e->HV_ON   = (bool)random(0, 10) > 2;
+  e->BSPD_OK = (bool)random(0, 10) > 1;
   e->steering = random(0, 10) > 1;
 }
 
