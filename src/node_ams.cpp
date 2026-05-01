@@ -51,8 +51,8 @@ WebSocketsClient* BPwebSocket = BPMobile.webSocket;
 socketstatus* BPsocketstatus = BPMobile.webSocketstatus;
 
 // Sampling Rates (Hz)
-const float BMU_CELLS_SAMPLING_RATE = DEFAULT_PUBLISH_RATE;
-const float BMU_FAULT_SAMPLING_RATE = DEFAULT_PUBLISH_RATE;
+const float BMU_CELLS_SAMPLING_RATE = 5.0;
+const float BMU_FAULT_SAMPLING_RATE = 2.0;
 
 // AMS CAN Timing
 #define BMS_RX_INTERVAL 10  // Poll CAN RX every 10ms
@@ -726,63 +726,40 @@ void registerClient(const char* name) {
 }
 
 void publishBMUcells(BMUdata* bmu, int moduleNum) {
-  uint64_t timestamp = syncTime_calcRelative_ms(RTC_UNIX_TIME);
-
-  JsonDocument doc;
-  doc["type"] = "data";
-
-  char groupBuf[24];
-  snprintf(groupBuf, sizeof(groupBuf), "bmu%d.cells", moduleNum);
-  doc["group"] = groupBuf;
-  doc["ts"] = timestamp;
-
-  JsonObject d = doc["d"].to<JsonObject>();
-  d["V_MODULE"] = bmu->V_MODULE;
-
-  JsonArray cells = d["V_CELL"].to<JsonArray>();
-  for (int i = 0; i < CELL_NUM; i++) {
-    cells.add(bmu->V_CELL[i]);
-  }
-
-  JsonArray temps = d["TEMP_SENSE"].to<JsonArray>();
-  for (int i = 0; i < TEMP_SENSOR_NUM; i++) {
-    temps.add(bmu->TEMP_SENSE[i]);
-  }
-
-  d["DV"] = bmu->DV;
-  d["connected"] = bmu->BMUconnected;
-
-  String msg;
-  serializeJson(doc, msg);
-  BPwebSocket->sendTXT(msg);
+  uint64_t ts = syncTime_calcRelative_ms(RTC_UNIX_TIME);
+  char buf[384];
+  // CELL_NUM=10, TEMP_SENSOR_NUM=2 — fixed-size, unrolled to keep snprintf single-shot
+  int n = snprintf(buf, sizeof(buf),
+    "{\"type\":\"data\",\"group\":\"bmu%d.cells\",\"ts\":%llu,"
+    "\"d\":{\"V_MODULE\":%u,"
+    "\"V_CELL\":[%u,%u,%u,%u,%u,%u,%u,%u,%u,%u],"
+    "\"TEMP_SENSE\":[%u,%u],"
+    "\"DV\":%u,\"connected\":%s}}",
+    moduleNum, ts,
+    bmu->V_MODULE,
+    bmu->V_CELL[0], bmu->V_CELL[1], bmu->V_CELL[2], bmu->V_CELL[3], bmu->V_CELL[4],
+    bmu->V_CELL[5], bmu->V_CELL[6], bmu->V_CELL[7], bmu->V_CELL[8], bmu->V_CELL[9],
+    bmu->TEMP_SENSE[0], bmu->TEMP_SENSE[1],
+    bmu->DV, bmu->BMUconnected ? "true" : "false");
+  if (n > 0) BPwebSocket->sendTXT(buf, n);
 }
 
 void publishBMUfaults(BMUdata* bmu, int moduleNum) {
-  uint64_t timestamp = syncTime_calcRelative_ms(RTC_UNIX_TIME);
-
-  JsonDocument doc;
-  doc["type"] = "data";
-
-  char groupBuf[24];
-  snprintf(groupBuf, sizeof(groupBuf), "bmu%d.faults", moduleNum);
-  doc["group"] = groupBuf;
-  doc["ts"] = timestamp;
-
-  JsonObject d = doc["d"].to<JsonObject>();
-  d["OV_WARN"]   = bmu->OVERVOLTAGE_WARNING;
-  d["OV_CRIT"]   = bmu->OVERVOLTAGE_CRITICAL;
-  d["LV_WARN"]   = bmu->LOWVOLTAGE_WARNING;
-  d["LV_CRIT"]   = bmu->LOWVOLTAGE_CRITICAL;
-  d["OT_WARN"]   = bmu->OVERTEMP_WARNING;
-  d["OT_CRIT"]   = bmu->OVERTEMP_CRITICAL;
-  d["ODV_WARN"]  = bmu->OVERDIV_VOLTAGE_WARNING;
-  d["ODV_CRIT"]  = bmu->OVERDIV_VOLTAGE_CRITICAL;
-  d["BAL_CELLS"] = bmu->BalancingDischarge_Cells;
-  d["NEED_BAL"]  = bmu->BMUneedBalance;
-
-  String msg;
-  serializeJson(doc, msg);
-  BPwebSocket->sendTXT(msg);
+  uint64_t ts = syncTime_calcRelative_ms(RTC_UNIX_TIME);
+  char buf[384];
+  int n = snprintf(buf, sizeof(buf),
+    "{\"type\":\"data\",\"group\":\"bmu%d.faults\",\"ts\":%llu,"
+    "\"d\":{\"OV_WARN\":%u,\"OV_CRIT\":%u,\"LV_WARN\":%u,\"LV_CRIT\":%u,"
+    "\"OT_WARN\":%u,\"OT_CRIT\":%u,\"ODV_WARN\":%u,\"ODV_CRIT\":%u,"
+    "\"BAL_CELLS\":%u,\"NEED_BAL\":%s}}",
+    moduleNum, ts,
+    bmu->OVERVOLTAGE_WARNING, bmu->OVERVOLTAGE_CRITICAL,
+    bmu->LOWVOLTAGE_WARNING,  bmu->LOWVOLTAGE_CRITICAL,
+    bmu->OVERTEMP_WARNING,    bmu->OVERTEMP_CRITICAL,
+    bmu->OVERDIV_VOLTAGE_WARNING, bmu->OVERDIV_VOLTAGE_CRITICAL,
+    bmu->BalancingDischarge_Cells,
+    bmu->BMUneedBalance ? "true" : "false");
+  if (n > 0) BPwebSocket->sendTXT(buf, n);
 }
 
 

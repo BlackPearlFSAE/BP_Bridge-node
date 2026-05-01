@@ -1,4 +1,42 @@
-// #pragma once
+/************************* Sites configs ***************************/
+
+// SD card Datalog config  (logging at 20Hz = 50ms/row)
+#define DEFAULT_SD_LOG_INTERVAL   100     // 50ms  -> 20Hz sample rate
+#define DEFAULT_SD_FLUSH_INTERVAL 5000   // 5s    -> flush every ~100 rows
+#define DEFAULT_SD_CLOSE_INTERVAL 30000  // 30s   -> close/reopen every ~600 rows
+#define DEFAULT_SD_ROW_LIMIT      5000   // rotate file after 5000 rows (~4 min at 20Hz)
+
+// Network handling config
+#define DEFAULT_SSID "realme C55"
+#define DEFAULT_PASSWORD "realme1234"
+// #define DEFAULT_SSID "dlink-D66C"
+// #define DEFAULT_PASSWORD "kdapk67358"
+// #define DEFAULT_SERVER_HOST "blackpearl-ws-8z9a.onrender.com"
+#define DEFAULT_SERVER_HOST "192.168.1.115"
+// #define DEFAULT_SERVER_PORT 443
+#define DEFAULT_SERVER_PORT 3000
+
+// #define DEFAULT_CLIENT_NAME "front"
+#define DEFAULT_CLIENT_NAME "front"
+#define DEFAULT_PUBLISH_RATE 10.0
+#define DEFAULT_WS_PATH "/ws"
+
+// Time sync handling
+#define DEFAULT_LOCAL_SYNC_INTERVAL 1000
+#define DEFAULT_REMOTE_SYNC_INTERVAL 60000
+
+
+/************************* Build Flags ***************************/
+
+#define MOCK_FLAG     1
+#define DEBUG_MODE    2     // 0 = Disabled, 1 = Regular Serial, 2 = Teleplot
+#define SD_ENABLED    1     // 0 = Disable SD card init + logging, 1 = Enabled
+#define WIFI_ENABLED  1     // 0   = Disable WiFi init (also disables WS), 1 = Enabled
+#define calibrate_RTC 0
+#define TIME_SRC      0     // 0 = RTC , 1 = WiFI NTP Pool
+#define WS_ENABLED    1     // 0 = Disable WebSocket + BPMobile task (WiFi still runs), 1 = Plain ws://, 2 = Secure wss://
+
+/************************* Constant ***************************/
 
 // LEDs
 #define WIFI_LED 3
@@ -47,41 +85,6 @@ extern int ElectPinArray[9];
 // can bus
 #define CAN_TX_PIN 48
 #define CAN_RX_PIN 47
-
-// SD card Datalog config  (logging at 20Hz = 50ms/row)
-#define DEFAULT_SD_LOG_INTERVAL   50     // 50ms  -> 20Hz sample rate
-#define DEFAULT_SD_FLUSH_INTERVAL 5000   // 5s    -> flush every ~100 rows
-#define DEFAULT_SD_CLOSE_INTERVAL 30000  // 30s   -> close/reopen every ~600 rows
-#define DEFAULT_SD_ROW_LIMIT      5000   // rotate file after 5000 rows (~4 min at 20Hz)
-
-// Network handling config
-// #define DEFAULT_SSID "realme C55"
-// #define DEFAULT_PASSWORD "realme1234"
-#define DEFAULT_SSID "dlink-D66C"
-#define DEFAULT_PASSWORD "kdapk67358"
-// #define DEFAULT_SERVER_HOST "blackpearl-ws-8z9a.onrender.com"
-#define DEFAULT_SERVER_HOST "192.168.1.115"
-// #define DEFAULT_SERVER_PORT 443
-#define DEFAULT_SERVER_PORT 3000
-
-// #define DEFAULT_CLIENT_NAME "front"
-#define DEFAULT_CLIENT_NAME "rear"
-#define DEFAULT_PUBLISH_RATE 10.0
-#define DEFAULT_WS_PATH "/ws"
-
-// Time sync handling
-#define DEFAULT_LOCAL_SYNC_INTERVAL 1000
-#define DEFAULT_REMOTE_SYNC_INTERVAL 60000
-
-/************************* Build Flags ***************************/
-
-#define MOCK_FLAG     0
-#define DEBUG_MODE    2     // 0 = Disabled, 1 = Regular Serial, 2 = Teleplot
-#define SD_ENABLED    1     // 0 = Disable SD card init + logging, 1 = Enabled
-#define WIFI_ENABLED  0     // 0   = Disable WiFi init (also disables WS), 1 = Enabled
-#define calibrate_RTC 0
-#define TIME_SRC      0     // 0 = RTC , 1 = WiFI NTP Pool
-#define WS_ENABLED    1     // 0 = Disable WebSocket + BPMobile task (WiFi still runs), 1 = Plain ws://, 2 = Secure wss://
 
 // -- ADC config
 const float aref = 3.3; 
