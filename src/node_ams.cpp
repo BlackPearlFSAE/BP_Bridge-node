@@ -219,6 +219,7 @@ void BPMobileTask(void* parameter) {
 void sdTask(void* parameter) {
   SDLogEntry entry;
   unsigned long lastFlushTime = 0;
+  unsigned long lastCloseTime = 0;
   int localDataPoint = 0;
 
   while (true) {
@@ -241,11 +242,12 @@ void sdTask(void* parameter) {
       if (localDataPoint > 0 && localDataPoint % SD_MAX_ROWS == 0) {
         closeAllFiles();
         partIndex++;
-        createPartitionDir();  // creates AMS_pN/ dir, CSV files, and opens them
+        createPartitionDir();
+        lastCloseTime = millis();
         Serial.printf("[SD] Row limit reached, rotated to partition: %s\n", partDirPath);
       }
 
-      unsigned long SESSION_TIME = millis();
+      unsigned long now = millis();
 
       // Write one row to each BMU file (one file per battery module)
       for (int i = 0; i < MODULE_NUM; i++) {
@@ -254,16 +256,20 @@ void sdTask(void* parameter) {
         }
       }
 
-      // Flush all BMU files periodically to prevent data loss on power cut
-      if (SESSION_TIME - lastFlushTime >= SD_FLUSH_INTERVAL) {
+      // Periodic flush
+      if (now - lastFlushTime >= SD_FLUSH_INTERVAL) {
         flushAllFiles();
-        lastFlushTime = SESSION_TIME;
+        lastFlushTime = now;
+      }
+
+      // Periodic close/reopen cycle to reset FAT write state
+      if (SD_CLOSE_INTERVAL > 0 && (now - lastCloseTime >= SD_CLOSE_INTERVAL)) {
+        closeAllFiles();
+        openAllFiles();
+        lastCloseTime = now;
       }
 
       localDataPoint++;
-      if (localDataPoint % 50 == 0) {
-        Serial.printf("[SD Task] Logged %d entries\n", localDataPoint);
-      }
     }
   }
 }
