@@ -48,11 +48,11 @@ extern int ElectPinArray[9];
 #define CAN_TX_PIN 48
 #define CAN_RX_PIN 47
 
-// SD card Datalog config
-#define DEFAULT_SD_LOG_INTERVAL 50 // 0.2 sec write
-#define DEFAULT_SD_FLUSH_INTERVAL 5000 // 5 sec flush
-#define DEFAULT_SD_CLOSE_INTERVAL 10000 // 15 sec close
-#define DEFAULT_SD_ROW_LIMIT 5000 // 1000 rows 
+// SD card Datalog config  (logging at 20Hz = 50ms/row)
+#define DEFAULT_SD_LOG_INTERVAL   50     // 50ms  -> 20Hz sample rate
+#define DEFAULT_SD_FLUSH_INTERVAL 5000   // 5s    -> flush every ~100 rows
+#define DEFAULT_SD_CLOSE_INTERVAL 30000  // 30s   -> close/reopen every ~600 rows
+#define DEFAULT_SD_ROW_LIMIT      5000   // rotate file after 5000 rows (~4 min at 20Hz)
 
 // Network handling config
 // #define DEFAULT_SSID "realme C55"

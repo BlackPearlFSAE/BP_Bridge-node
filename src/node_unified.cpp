@@ -185,53 +185,34 @@ static void closeLogFile() {
 
 static bool isLogFileOpen() { return _logFileOpen; }
 
-static void writeLogRow(const SDLogEntry& e) {
-  _logFile.print(e.dataPoint);        _logFile.print(',');
-  _logFile.print(e.unixTime);         _logFile.print(',');
-  _logFile.print(e.sessionTime);      _logFile.print(',');
-
-  _logFile.print(e.mech.Wheel_RPM_L, 2);  _logFile.print(',');
-  _logFile.print(e.mech.Wheel_RPM_R, 2);  _logFile.print(',');
-  _logFile.print(e.mech.STR_Heave_mm, 2); _logFile.print(',');
-  _logFile.print(e.mech.STR_Roll_mm, 2);  _logFile.print(',');
-
-  _logFile.print(e.elect.I_SENSE, 2); _logFile.print(',');
-  _logFile.print(e.elect.TMP, 2);     _logFile.print(',');
-  _logFile.print(e.elect.APPS, 2);    _logFile.print(',');
-  _logFile.print(e.elect.BPPS, 2);    _logFile.print(',');
-  _logFile.print(e.elect.AMS_OK  ? 1 : 0); _logFile.print(',');
-  _logFile.print(e.elect.IMD_OK  ? 1 : 0); _logFile.print(',');
-  _logFile.print(e.elect.HV_ON   ? 1 : 0); _logFile.print(',');
-  _logFile.print(e.elect.BSPD_OK ? 1 : 0); _logFile.print(',');
-  _logFile.print(e.elect.steering, 2);      _logFile.print(',');
-
-  _logFile.print(e.odom.gps_lat, 4);    _logFile.print(',');
-  _logFile.print(e.odom.gps_lng, 4);    _logFile.print(',');
-  _logFile.print(e.odom.gps_age, 2);    _logFile.print(',');
-  _logFile.print(e.odom.gps_course, 2); _logFile.print(',');
-  _logFile.print(e.odom.gps_speed, 2);  _logFile.print(',');
-  _logFile.print(e.odom.imu_accelx, 2); _logFile.print(',');
-  _logFile.print(e.odom.imu_accely, 2); _logFile.print(',');
-  _logFile.print(e.odom.imu_accelz, 2); _logFile.print(',');
-  _logFile.print(e.odom.imu_gyrox, 2);  _logFile.print(',');
-  _logFile.print(e.odom.imu_gyroy, 2);  _logFile.print(',');
-  _logFile.print(e.odom.imu_gyroz, 2);  _logFile.print(',');
-  _logFile.print(e.odom.imu_euler_roll, 2);  _logFile.print(',');
-  _logFile.print(e.odom.imu_euler_pitch, 2); _logFile.print(',');
-  _logFile.print(e.odom.imu_euler_yaw, 2);   _logFile.print(',');
-  _logFile.print(e.odom.imu_magx, 2); _logFile.print(',');
-  _logFile.print(e.odom.imu_magy, 2); _logFile.print(',');
-  _logFile.print(e.odom.imu_magz, 2); _logFile.print(',');
-  _logFile.print(e.odom.imu_gravx, 2); _logFile.print(',');
-  _logFile.print(e.odom.imu_gravy, 2); _logFile.print(',');
-  _logFile.print(e.odom.imu_gravz, 2); _logFile.print(',');
-
-  _logFile.print(e.bamo.canVoltage, 2);      _logFile.print(',');
-  _logFile.print(e.bamo.canCurrent, 2);      _logFile.print(',');
-  _logFile.print(e.bamo.power, 2);           _logFile.print(',');
-  _logFile.print(e.bamo.motorTemp2, 1);      _logFile.print(',');
-  _logFile.print(e.bamo.controllerTemp, 1);  _logFile.print(',');
-  _logFile.println(e.bamo.rpm, 0);
+static void append_sensors_toCSV(const SDLogEntry& e) {
+  char buf[512];
+  int n = snprintf(buf, sizeof(buf),
+    "%d,%llu,%llu,"
+    "%.2f,%.2f,%.2f,%.2f,"
+    "%.2f,%.2f,%.2f,%.2f,%d,%d,%d,%d,%.2f,"
+    "%.4f,%.4f,%.2f,%.2f,%.2f,"
+    "%.2f,%.2f,%.2f,"
+    "%.2f,%.2f,%.2f,"
+    "%.2f,%.2f,%.2f,"
+    "%.2f,%.2f,%.2f,"
+    "%.2f,%.2f,%.2f,"
+    "%.2f,%.2f,%.2f,%.1f,%.1f,%.0f\r\n",
+    e.dataPoint, e.unixTime, e.sessionTime,
+    e.mech.Wheel_RPM_L, e.mech.Wheel_RPM_R, e.mech.STR_Heave_mm, e.mech.STR_Roll_mm,
+    e.elect.I_SENSE, e.elect.TMP, e.elect.APPS, e.elect.BPPS,
+    e.elect.AMS_OK ? 1 : 0, e.elect.IMD_OK ? 1 : 0, e.elect.HV_ON ? 1 : 0, e.elect.BSPD_OK ? 1 : 0,
+    e.elect.steering,
+    e.odom.gps_lat, e.odom.gps_lng, e.odom.gps_age, e.odom.gps_course, e.odom.gps_speed,
+    e.odom.imu_accelx, e.odom.imu_accely, e.odom.imu_accelz,
+    e.odom.imu_gyrox,  e.odom.imu_gyroy,  e.odom.imu_gyroz,
+    e.odom.imu_euler_roll, e.odom.imu_euler_pitch, e.odom.imu_euler_yaw,
+    e.odom.imu_magx,  e.odom.imu_magy,  e.odom.imu_magz,
+    e.odom.imu_gravx, e.odom.imu_gravy, e.odom.imu_gravz,
+    e.bamo.canVoltage, e.bamo.canCurrent, e.bamo.power,
+    e.bamo.motorTemp2, e.bamo.controllerTemp, e.bamo.rpm
+  );
+  if (n > 0) _logFile.write((const uint8_t*)buf, n);
 }
 
 /************************* Tasks ***************************/
@@ -299,7 +280,7 @@ void sdTask(void* parameter) {
         Serial.printf("[SD] Row limit reached, rotated to: %s\n", csvFilename);
       }
 
-      writeLogRow(entry);
+      append_sensors_toCSV(entry);
 
       unsigned long now = millis();
       if (SD_FLUSH_INTERVAL == 0 || (now - _logLastFlush >= SD_FLUSH_INTERVAL)) {

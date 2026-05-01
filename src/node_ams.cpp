@@ -130,7 +130,7 @@ void registerClient(const char* clientName);
 void process_BMU_CANmsg(twai_message_t *receivedframe, BMUdata *BMU_Package, int moduleNum);
 // File Management
 void showDeviceStatus();
-void append_BMU_toCSVFile(File& dataFile, BMUdata* bmu, int dp, uint64_t Timestamp, uint64_t session);
+void append_BMU_toCSV(File& dataFile, BMUdata* bmu, int dp, uint64_t Timestamp, uint64_t session);
 void createPartitionDir();
 void openAllFiles();
 void closeAllFiles();
@@ -252,7 +252,7 @@ void sdTask(void* parameter) {
       // Write one row to each BMU file (one file per battery module)
       for (int i = 0; i < MODULE_NUM; i++) {
         if (bmuFiles[i]) {
-          append_BMU_toCSVFile(bmuFiles[i], &entry.bmu[i], entry.dataPoint, entry.unixTime, entry.sessionTime);
+          append_BMU_toCSV(bmuFiles[i], &entry.bmu[i], entry.dataPoint, entry.unixTime, entry.sessionTime);
         }
       }
 
@@ -631,38 +631,30 @@ void flushAllFiles() {
 
 /************************* CSV Appenders ***************************/
 
-void append_BMU_toCSVFile(File& dataFile, BMUdata* bmu, int dp, uint64_t Timestamp, uint64_t session) {
-  // DataPoint, UnixTime, SessionTime
-  dataFile.print(dp); dataFile.print(",");
-  dataFile.print(Timestamp); dataFile.print(",");
-  dataFile.print(session); dataFile.print(",");
-
-  // V_MODULE (scaled: 0.02V per bit), TEMP1, TEMP2 (decoded: (val * 0.5) - 40), DV (scaled: 0.1V per bit)
-  dataFile.print(bmu->V_MODULE * 0.02f, 2); dataFile.print(",");
-  dataFile.print((bmu->TEMP_SENSE[0] * 0.5f) - 40.0f, 1); dataFile.print(",");
-  dataFile.print((bmu->TEMP_SENSE[1] * 0.5f) - 40.0f, 1); dataFile.print(",");
-  dataFile.print(bmu->DV * 0.1f, 2); dataFile.print(",");
-
-  // Cell voltages (10 cells, scaled: 0.02V per bit)
-  for (int i = 0; i < CELL_NUM; i++) {
-    dataFile.print(bmu->V_CELL[i] * 0.02f, 3);
-    dataFile.print(",");
-  }
-
-  // Fault flags (16-bit bitmasks, log as hex for readability)
-  dataFile.print(bmu->OVERVOLTAGE_WARNING, HEX); dataFile.print(",");
-  dataFile.print(bmu->OVERVOLTAGE_CRITICAL, HEX); dataFile.print(",");
-  dataFile.print(bmu->LOWVOLTAGE_WARNING, HEX); dataFile.print(",");
-  dataFile.print(bmu->LOWVOLTAGE_CRITICAL, HEX); dataFile.print(",");
-  dataFile.print(bmu->OVERTEMP_WARNING, HEX); dataFile.print(",");
-  dataFile.print(bmu->OVERTEMP_CRITICAL, HEX); dataFile.print(",");
-  dataFile.print(bmu->OVERDIV_VOLTAGE_WARNING, HEX); dataFile.print(",");
-  dataFile.print(bmu->OVERDIV_VOLTAGE_CRITICAL, HEX); dataFile.print(",");
-
-  // Status (balancing as hex bitmask)
-  dataFile.print(bmu->BalancingDischarge_Cells, HEX); dataFile.print(",");
-  dataFile.print(bmu->BMUconnected); dataFile.print(",");
-  dataFile.println(bmu->BMUneedBalance);
+void append_BMU_toCSV(File& dataFile, BMUdata* bmu, int dp, uint64_t Timestamp, uint64_t session) {
+  char buf[384];
+  int n = snprintf(buf, sizeof(buf),
+    "%d,%llu,%llu,"
+    "%.2f,%.1f,%.1f,%.2f,"
+    "%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,"
+    "%X,%X,%X,%X,%X,%X,%X,%X,"
+    "%X,%d,%d\r\n",
+    dp, Timestamp, session,
+    bmu->V_MODULE * 0.02f,
+    (bmu->TEMP_SENSE[0] * 0.5f) - 40.0f,
+    (bmu->TEMP_SENSE[1] * 0.5f) - 40.0f,
+    bmu->DV * 0.1f,
+    bmu->V_CELL[0] * 0.02f, bmu->V_CELL[1] * 0.02f, bmu->V_CELL[2] * 0.02f,
+    bmu->V_CELL[3] * 0.02f, bmu->V_CELL[4] * 0.02f, bmu->V_CELL[5] * 0.02f,
+    bmu->V_CELL[6] * 0.02f, bmu->V_CELL[7] * 0.02f, bmu->V_CELL[8] * 0.02f,
+    bmu->V_CELL[9] * 0.02f,
+    bmu->OVERVOLTAGE_WARNING, bmu->OVERVOLTAGE_CRITICAL,
+    bmu->LOWVOLTAGE_WARNING,  bmu->LOWVOLTAGE_CRITICAL,
+    bmu->OVERTEMP_WARNING,    bmu->OVERTEMP_CRITICAL,
+    bmu->OVERDIV_VOLTAGE_WARNING, bmu->OVERDIV_VOLTAGE_CRITICAL,
+    bmu->BalancingDischarge_Cells, bmu->BMUconnected, bmu->BMUneedBalance
+  );
+  if (n > 0) dataFile.write((const uint8_t*)buf, n);
 }
 
 /************************* BPMobile Publishers ***************************/
