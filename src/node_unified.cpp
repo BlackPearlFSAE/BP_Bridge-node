@@ -653,112 +653,83 @@ void loop() {
 /************************* BPMobile Publishers ***************************/
 
 void publishMechData(Mechanical* m) {
-  uint64_t timestamp = syncTime_calcRelative_ms(RTC_UNIX_TIME);
-  JsonDocument doc;
-  doc["type"]  = "data";
-  doc["node"]  = clientName;
-  doc["group"] = "mech";
-  doc["ts"]    = timestamp;
-  doc["d"]["Wheel_RPM_L"]  = m->Wheel_RPM_L;
-  doc["d"]["Wheel_RPM_R"]  = m->Wheel_RPM_R;
-  doc["d"]["STR_Heave_mm"] = m->STR_Heave_mm;
-  doc["d"]["STR_Roll_mm"]  = m->STR_Roll_mm;
-  String msg;
-  serializeJson(doc, msg);
-  BPwebSocket->sendTXT(msg);
+  uint64_t ts = syncTime_calcRelative_ms(RTC_UNIX_TIME);
+  char buf[256];
+  int n = snprintf(buf, sizeof(buf),
+    "{\"type\":\"data\",\"node\":\"%s\",\"group\":\"mech\",\"ts\":%llu,"
+    "\"d\":{\"Wheel_RPM_L\":%.4f,\"Wheel_RPM_R\":%.4f,"
+    "\"STR_Heave_mm\":%.4f,\"STR_Roll_mm\":%.4f}}",
+    clientName, ts,
+    m->Wheel_RPM_L, m->Wheel_RPM_R, m->STR_Heave_mm, m->STR_Roll_mm);
+  if (n > 0) BPwebSocket->sendTXT(buf, n);
 }
 
 void publishElectData(Electrical* e) {
-  uint64_t timestamp = syncTime_calcRelative_ms(RTC_UNIX_TIME);
-  JsonDocument doc;
-  doc["type"]  = "data";
-  doc["node"]  = clientName;
-  doc["group"] = "elect";
-  doc["ts"]    = timestamp;
-  doc["d"]["I_SENSE"] = e->I_SENSE;
-  doc["d"]["TMP"]     = e->TMP;
-  doc["d"]["APPS"]    = e->APPS;
-  doc["d"]["BPPS"]    = e->BPPS;
-  doc["d"]["steering"] = e->steering;
-  String msg;
-  serializeJson(doc, msg);
-  BPwebSocket->sendTXT(msg);
+  uint64_t ts = syncTime_calcRelative_ms(RTC_UNIX_TIME);
+  char buf[256];
+  int n = snprintf(buf, sizeof(buf),
+    "{\"type\":\"data\",\"node\":\"%s\",\"group\":\"elect\",\"ts\":%llu,"
+    "\"d\":{\"I_SENSE\":%.4f,\"TMP\":%.4f,\"APPS\":%.4f,\"BPPS\":%.4f,\"steering\":%.4f}}",
+    clientName, ts,
+    e->I_SENSE, e->TMP, e->APPS, e->BPPS, e->steering);
+  if (n > 0) BPwebSocket->sendTXT(buf, n);
 }
 
 void publishElectFaultState(Electrical* e) {
-  uint64_t timestamp = syncTime_calcRelative_ms(RTC_UNIX_TIME);
-  JsonDocument doc;
-  doc["type"]  = "data";
-  doc["node"]  = clientName;
-  doc["group"] = "faults";
-  doc["ts"]    = timestamp;
-  doc["d"]["AMS_OK"]  = (bool)e->AMS_OK;
-  doc["d"]["IMD_OK"]  = (bool)e->IMD_OK;
-  doc["d"]["HV_ON"]   = (bool)e->HV_ON;
-  doc["d"]["BSPD_OK"] = (bool)e->BSPD_OK;
-  String msg;
-  serializeJson(doc, msg);
-  BPwebSocket->sendTXT(msg);
+  uint64_t ts = syncTime_calcRelative_ms(RTC_UNIX_TIME);
+  char buf[256];
+  int n = snprintf(buf, sizeof(buf),
+    "{\"type\":\"data\",\"node\":\"%s\",\"group\":\"faults\",\"ts\":%llu,"
+    "\"d\":{\"AMS_OK\":%s,\"IMD_OK\":%s,\"HV_ON\":%s,\"BSPD_OK\":%s}}",
+    clientName, ts,
+    e->AMS_OK  ? "true" : "false",
+    e->IMD_OK  ? "true" : "false",
+    e->HV_ON   ? "true" : "false",
+    e->BSPD_OK ? "true" : "false");
+  if (n > 0) BPwebSocket->sendTXT(buf, n);
 }
 
 void publishOdometryData(Odometry* o) {
-  uint64_t timestamp = syncTime_calcRelative_ms(RTC_UNIX_TIME);
-  JsonDocument doc;
-  doc["type"]  = "data";
-  doc["node"]  = clientName;
-  doc["group"] = "odom";
-  doc["ts"]    = timestamp;
-  doc["d"]["gps_lat"]     = o->gps_lat;
-  doc["d"]["gps_lng"]     = o->gps_lng;
-  doc["d"]["gps_age"]     = o->gps_age;
-  doc["d"]["gps_course"]  = o->gps_course;
-  doc["d"]["gps_speed"]   = o->gps_speed;
-  doc["d"]["imu_accel_x"] = o->imu_accelx;
-  doc["d"]["imu_accel_y"] = o->imu_accely;
-  doc["d"]["imu_accel_z"] = o->imu_accelz;
-  doc["d"]["imu_gyro_x"]  = o->imu_gyrox;
-  doc["d"]["imu_gyro_y"]  = o->imu_gyroy;
-  doc["d"]["imu_gyro_z"]  = o->imu_gyroz;
-  doc["d"]["imu_euler_roll"]  = o->imu_euler_roll;
-  doc["d"]["imu_euler_pitch"] = o->imu_euler_pitch;
-  doc["d"]["imu_euler_yaw"]   = o->imu_euler_yaw;
-  doc["d"]["imu_mag_x"]   = o->imu_magx;
-  doc["d"]["imu_mag_y"]   = o->imu_magy;
-  doc["d"]["imu_mag_z"]   = o->imu_magz;
-  doc["d"]["imu_grav_x"]  = o->imu_gravx;
-  doc["d"]["imu_grav_y"]  = o->imu_gravy;
-  doc["d"]["imu_grav_z"]  = o->imu_gravz;
-  String msg;
-  serializeJson(doc, msg);
-  BPwebSocket->sendTXT(msg);
+  uint64_t ts = syncTime_calcRelative_ms(RTC_UNIX_TIME);
+  char buf[768];
+  int n = snprintf(buf, sizeof(buf),
+    "{\"type\":\"data\",\"node\":\"%s\",\"group\":\"odom\",\"ts\":%llu,"
+    "\"d\":{"
+    "\"gps_lat\":%.6f,\"gps_lng\":%.6f,\"gps_age\":%.2f,"
+    "\"gps_course\":%.2f,\"gps_speed\":%.2f,"
+    "\"imu_accel_x\":%.4f,\"imu_accel_y\":%.4f,\"imu_accel_z\":%.4f,"
+    "\"imu_gyro_x\":%.4f,\"imu_gyro_y\":%.4f,\"imu_gyro_z\":%.4f,"
+    "\"imu_euler_roll\":%.4f,\"imu_euler_pitch\":%.4f,\"imu_euler_yaw\":%.4f,"
+    "\"imu_mag_x\":%.4f,\"imu_mag_y\":%.4f,\"imu_mag_z\":%.4f,"
+    "\"imu_grav_x\":%.4f,\"imu_grav_y\":%.4f,\"imu_grav_z\":%.4f}}",
+    clientName, ts,
+    o->gps_lat, o->gps_lng, o->gps_age, o->gps_course, o->gps_speed,
+    o->imu_accelx, o->imu_accely, o->imu_accelz,
+    o->imu_gyrox,  o->imu_gyroy,  o->imu_gyroz,
+    o->imu_euler_roll, o->imu_euler_pitch, o->imu_euler_yaw,
+    o->imu_magx,  o->imu_magy,  o->imu_magz,
+    o->imu_gravx, o->imu_gravy, o->imu_gravz);
+  if (n > 0) BPwebSocket->sendTXT(buf, n);
 }
 
 void publishBAMOpower(BAMOCar* b) {
-  uint64_t timestamp = syncTime_calcRelative_ms(RTC_UNIX_TIME);
-  JsonDocument doc;
-  doc["type"]  = "data";
-  doc["group"] = "bamo.power";
-  doc["ts"]    = timestamp;
-  doc["d"]["canVoltage"]      = b->canVoltage;
-  doc["d"]["canCurrent"]      = b->canCurrent;
-  doc["d"]["power"]           = b->power;
-  doc["d"]["rpm"]             = b->rpm;
-  String msg;
-  serializeJson(doc, msg);
-  BPwebSocket->sendTXT(msg);
+  uint64_t ts = syncTime_calcRelative_ms(RTC_UNIX_TIME);
+  char buf[256];
+  int n = snprintf(buf, sizeof(buf),
+    "{\"type\":\"data\",\"group\":\"bamo.power\",\"ts\":%llu,"
+    "\"d\":{\"canVoltage\":%.4f,\"canCurrent\":%.4f,\"power\":%.4f,\"rpm\":%.0f}}",
+    ts, b->canVoltage, b->canCurrent, b->power, b->rpm);
+  if (n > 0) BPwebSocket->sendTXT(buf, n);
 }
 
 void publishBAMOtemp(BAMOCar* b) {
-  uint64_t timestamp = syncTime_calcRelative_ms(RTC_UNIX_TIME);
-  JsonDocument doc;
-  doc["type"]  = "data";
-  doc["group"] = "bamo.temp";
-  doc["ts"]    = timestamp;
-  doc["d"]["motorTemp"]      = b->motorTemp2;
-  doc["d"]["controllerTemp"] = b->controllerTemp;
-  String msg;
-  serializeJson(doc, msg);
-  BPwebSocket->sendTXT(msg);
+  uint64_t ts = syncTime_calcRelative_ms(RTC_UNIX_TIME);
+  char buf[192];
+  int n = snprintf(buf, sizeof(buf),
+    "{\"type\":\"data\",\"group\":\"bamo.temp\",\"ts\":%llu,"
+    "\"d\":{\"motorTemp\":%.2f,\"controllerTemp\":%.2f}}",
+    ts, b->motorTemp2, b->controllerTemp);
+  if (n > 0) BPwebSocket->sendTXT(buf, n);
 }
 
 void registerClient(const char* clientName) {
