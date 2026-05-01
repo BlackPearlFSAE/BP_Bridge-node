@@ -42,8 +42,6 @@ extern int ElectPinArray[9];
 #define GPS_TX_PIN 1
 #define IMU_SDA 42
 #define IMU_SCL 41
-// #define IMU_SDA 9
-// #define IMU_SCL 8
 #define GPS_BAUD 9600
 
 // can bus
@@ -51,7 +49,7 @@ extern int ElectPinArray[9];
 #define CAN_RX_PIN 47
 
 // SD card Datalog config
-#define DEFAULT_SD_LOG_INTERVAL 200 // 0.2 sec write
+#define DEFAULT_SD_LOG_INTERVAL 50 // 0.2 sec write
 #define DEFAULT_SD_FLUSH_INTERVAL 5000 // 5 sec flush
 #define DEFAULT_SD_CLOSE_INTERVAL 10000 // 15 sec close
 #define DEFAULT_SD_ROW_LIMIT 5000 // 1000 rows 
@@ -59,19 +57,16 @@ extern int ElectPinArray[9];
 // Network handling config
 // #define DEFAULT_SSID "realme C55"
 // #define DEFAULT_PASSWORD "realme1234"
-#define DEFAULT_SSID "ton-office256B"
-#define DEFAULT_PASSWORD "22222222"
-// #define DEFAULT_SSID "dlink-D66C"
-// #define DEFAULT_PASSWORD "kdapk67358"
-
+#define DEFAULT_SSID "dlink-D66C"
+#define DEFAULT_PASSWORD "kdapk67358"
 // #define DEFAULT_SERVER_HOST "blackpearl-ws-8z9a.onrender.com"
 #define DEFAULT_SERVER_HOST "192.168.1.115"
 // #define DEFAULT_SERVER_PORT 443
 #define DEFAULT_SERVER_PORT 3000
 
-#define DEFAULT_CLIENT_NAME "front"
-// #define DEFAULT_CLIENT_NAME "rear"
-#define DEFAULT_PUBLISH_RATE 5.0
+// #define DEFAULT_CLIENT_NAME "front"
+#define DEFAULT_CLIENT_NAME "rear"
+#define DEFAULT_PUBLISH_RATE 10.0
 #define DEFAULT_WS_PATH "/ws"
 
 // Time sync handling
@@ -80,10 +75,10 @@ extern int ElectPinArray[9];
 
 /************************* Build Flags ***************************/
 
-#define MOCK_FLAG     1
+#define MOCK_FLAG     0
 #define DEBUG_MODE    2     // 0 = Disabled, 1 = Regular Serial, 2 = Teleplot
 #define SD_ENABLED    1     // 0 = Disable SD card init + logging, 1 = Enabled
-#define WIFI_ENABLED  1     // 0   = Disable WiFi init (also disables WS), 1 = Enabled
+#define WIFI_ENABLED  0     // 0   = Disable WiFi init (also disables WS), 1 = Enabled
 #define calibrate_RTC 0
 #define TIME_SRC      0     // 0 = RTC , 1 = WiFI NTP Pool
 #define WS_ENABLED    1     // 0 = Disable WebSocket + BPMobile task (WiFi still runs), 1 = Plain ws://, 2 = Secure wss://

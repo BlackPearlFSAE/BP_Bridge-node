@@ -93,11 +93,6 @@ typedef struct {
   float canCurrent = 0.0;
   float power = 0.0;
   float rpm = 0.0;
-  bool motorTempValid = false;
-  bool controllerTempValid = false;
-  bool canVoltageValid = false;
-  bool canCurrentValid = false;
-  bool rpmValid = false;
 } BAMOCar;
 
 void pack_RequestBamocarMsg(twai_message_t* msg, uint8_t regAddress);

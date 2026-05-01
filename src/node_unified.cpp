@@ -49,7 +49,7 @@ const char* ssid = DEFAULT_SSID;
 const char* password = DEFAULT_PASSWORD;
 const char* serverHost = DEFAULT_SERVER_HOST;
 const int   serverPort = DEFAULT_SERVER_PORT;
-const char* clientName = "Node";
+const char* clientName = DEFAULT_CLIENT_NAME;
 WebSocketsClient webSockets;
 socketstatus webSocketStatus;
 BPMobileConfig BPMobile(&webSockets, &webSocketStatus);
@@ -59,7 +59,7 @@ socketstatus*     BPsocketstatus = BPMobile.webSocketstatus;
 // Sampling Rates (Hz)
 const float MECH_SENSORS_SAMPLING_RATE      = DEFAULT_PUBLISH_RATE;
 const float ELECT_SENSORS_SAMPLING_RATE     = DEFAULT_PUBLISH_RATE;
-const float ELECT_FAULT_STAT_SAMPLING_RATE  = DEFAULT_PUBLISH_RATE;
+const float ELECT_FAULT_SAMPLING_RATE  = DEFAULT_PUBLISH_RATE;
 const float ODOM_SENSORS_SAMPLING_RATE      = DEFAULT_PUBLISH_RATE;
 const float BAMO_POWER_SAMPLING_RATE        = DEFAULT_PUBLISH_RATE;
 const float BAMO_TEMP_SAMPLING_RATE         = DEFAULT_PUBLISH_RATE;
@@ -107,8 +107,8 @@ char csvFilename[48]    = {0};
 int  fileIndex = 0;
 const char* CSV_HEADER =
   "DataPoint,UnixTime,SessionTime,"
-  "Wheel_RPM_Left,Wheel_RPM_Right,Heave_mm,Roll_mm,"
-  "I_SENSE(A),TMP(C),APPS(%),BPPS(%),AMS_OK,IMD_OK,HV_ON,BSPD_OK,Steering angle,"
+  "Wheel_RPM_L,Wheel_RPM_R,Heave_mm,Roll_mm,"
+  "I_SENSE(A),TMP(C),APPS(%),BPPS(%),AMS_OK,IMD_OK,HV_ON,BSPD_OK,Steering,"
   "GPS_Lat,GPS_Lng,GPS_Age,GPS_Course,GPS_Speed,"
   "IMU_AccelX,IMU_AccelY,IMU_AccelZ,"
   "IMU_GyroX,IMU_GyroY,IMU_GyroZ,"
@@ -150,60 +150,88 @@ struct SDLogEntry {
   BAMOCar    bamo;
 };
 
-/************************* CSV Row Writer ***************************/
+/************************* SD open write flush, close system ***************************/
 
-// Single appender: prints an entire SDLogEntry as one CSV row.
-// SD32_appendBulkDataPersistent handles comma between appenders and trailing
-// println, but with count=1 we emit every comma ourselves except the last.
-static void writeWholeRow(File& f, void* data) {
-  SDLogEntry* e = static_cast<SDLogEntry*>(data);
+static File      _logFile;
+static bool      _logFileOpen    = false;
+static char      _logFilePath[48] = {0};
+static unsigned long _logLastFlush = 0;
+static unsigned long _logLastClose = 0;
 
-  f.print(e->dataPoint);        f.print(',');
-  f.print(e->unixTime);         f.print(',');
-  f.print(e->sessionTime);      f.print(',');
+static bool openLogFile(const char* path) {
+  _logFile = SD.open(path, FILE_APPEND);
+  if (!_logFile) {
+    Serial.printf("[SD] ERROR: Could not open log file: %s\n", path);
+    _logFileOpen = false;
+    return false;
+  }
+  strncpy(_logFilePath, path, sizeof(_logFilePath) - 1);
+  _logFilePath[sizeof(_logFilePath) - 1] = '\0';
+  _logFileOpen  = true;
+  _logLastFlush = millis();
+  Serial.printf("[SD] Log file opened: %s\n", path);
+  return true;
+}
 
-  f.print(e->mech.Wheel_RPM_L, 2);  f.print(',');
-  f.print(e->mech.Wheel_RPM_R, 2);  f.print(',');
-  f.print(e->mech.STR_Heave_mm, 2); f.print(',');
-  f.print(e->mech.STR_Roll_mm, 2);  f.print(',');
+static void closeLogFile() {
+  if (_logFileOpen && _logFile) {
+    _logFile.flush();
+    _logFile.close();
+    _logFileOpen = false;
+    _logFilePath[0] = '\0';
+    Serial.println("[SD] Log file closed");
+  }
+}
 
-  f.print(e->elect.I_SENSE, 2); f.print(',');
-  f.print(e->elect.TMP, 2);     f.print(',');
-  f.print(e->elect.APPS, 2);    f.print(',');
-  f.print(e->elect.BPPS, 2);    f.print(',');
-  f.print(e->elect.AMS_OK  ? 1 : 0); f.print(',');
-  f.print(e->elect.IMD_OK  ? 1 : 0); f.print(',');
-  f.print(e->elect.HV_ON   ? 1 : 0); f.print(',');
-  f.print(e->elect.BSPD_OK ? 1 : 0); f.print(',');
-  f.print(e->elect.steering, 2);     f.print(',');
+static bool isLogFileOpen() { return _logFileOpen; }
 
-  f.print(e->odom.gps_lat, 4);    f.print(',');
-  f.print(e->odom.gps_lng, 4);    f.print(',');
-  f.print(e->odom.gps_age, 2);    f.print(',');
-  f.print(e->odom.gps_course, 2); f.print(',');
-  f.print(e->odom.gps_speed, 2);  f.print(',');
-  f.print(e->odom.imu_accelx, 2); f.print(',');
-  f.print(e->odom.imu_accely, 2); f.print(',');
-  f.print(e->odom.imu_accelz, 2); f.print(',');
-  f.print(e->odom.imu_gyrox, 2);  f.print(',');
-  f.print(e->odom.imu_gyroy, 2);  f.print(',');
-  f.print(e->odom.imu_gyroz, 2);  f.print(',');
-  f.print(e->odom.imu_euler_roll, 2);  f.print(',');
-  f.print(e->odom.imu_euler_pitch, 2); f.print(',');
-  f.print(e->odom.imu_euler_yaw, 2);   f.print(',');
-  f.print(e->odom.imu_magx, 2); f.print(',');
-  f.print(e->odom.imu_magy, 2); f.print(',');
-  f.print(e->odom.imu_magz, 2); f.print(',');
-  f.print(e->odom.imu_gravx, 2); f.print(',');
-  f.print(e->odom.imu_gravy, 2); f.print(',');
-  f.print(e->odom.imu_gravz, 2); f.print(',');
+static void writeLogRow(const SDLogEntry& e) {
+  _logFile.print(e.dataPoint);        _logFile.print(',');
+  _logFile.print(e.unixTime);         _logFile.print(',');
+  _logFile.print(e.sessionTime);      _logFile.print(',');
 
-  f.print(e->bamo.canVoltageValid ? e->bamo.canVoltage : 0.0f, 2); f.print(',');
-  f.print(e->bamo.canCurrentValid ? e->bamo.canCurrent : 0.0f, 2); f.print(',');
-  f.print(e->bamo.power, 2); f.print(',');
-  f.print(e->bamo.motorTempValid      ? e->bamo.motorTemp2    : 0.0f, 1); f.print(',');
-  f.print(e->bamo.controllerTempValid ? e->bamo.controllerTemp : 0.0f, 1); f.print(',');
-  f.print(e->bamo.rpmValid ? e->bamo.rpm : 0.0f, 0);
+  _logFile.print(e.mech.Wheel_RPM_L, 2);  _logFile.print(',');
+  _logFile.print(e.mech.Wheel_RPM_R, 2);  _logFile.print(',');
+  _logFile.print(e.mech.STR_Heave_mm, 2); _logFile.print(',');
+  _logFile.print(e.mech.STR_Roll_mm, 2);  _logFile.print(',');
+
+  _logFile.print(e.elect.I_SENSE, 2); _logFile.print(',');
+  _logFile.print(e.elect.TMP, 2);     _logFile.print(',');
+  _logFile.print(e.elect.APPS, 2);    _logFile.print(',');
+  _logFile.print(e.elect.BPPS, 2);    _logFile.print(',');
+  _logFile.print(e.elect.AMS_OK  ? 1 : 0); _logFile.print(',');
+  _logFile.print(e.elect.IMD_OK  ? 1 : 0); _logFile.print(',');
+  _logFile.print(e.elect.HV_ON   ? 1 : 0); _logFile.print(',');
+  _logFile.print(e.elect.BSPD_OK ? 1 : 0); _logFile.print(',');
+  _logFile.print(e.elect.steering, 2);      _logFile.print(',');
+
+  _logFile.print(e.odom.gps_lat, 4);    _logFile.print(',');
+  _logFile.print(e.odom.gps_lng, 4);    _logFile.print(',');
+  _logFile.print(e.odom.gps_age, 2);    _logFile.print(',');
+  _logFile.print(e.odom.gps_course, 2); _logFile.print(',');
+  _logFile.print(e.odom.gps_speed, 2);  _logFile.print(',');
+  _logFile.print(e.odom.imu_accelx, 2); _logFile.print(',');
+  _logFile.print(e.odom.imu_accely, 2); _logFile.print(',');
+  _logFile.print(e.odom.imu_accelz, 2); _logFile.print(',');
+  _logFile.print(e.odom.imu_gyrox, 2);  _logFile.print(',');
+  _logFile.print(e.odom.imu_gyroy, 2);  _logFile.print(',');
+  _logFile.print(e.odom.imu_gyroz, 2);  _logFile.print(',');
+  _logFile.print(e.odom.imu_euler_roll, 2);  _logFile.print(',');
+  _logFile.print(e.odom.imu_euler_pitch, 2); _logFile.print(',');
+  _logFile.print(e.odom.imu_euler_yaw, 2);   _logFile.print(',');
+  _logFile.print(e.odom.imu_magx, 2); _logFile.print(',');
+  _logFile.print(e.odom.imu_magy, 2); _logFile.print(',');
+  _logFile.print(e.odom.imu_magz, 2); _logFile.print(',');
+  _logFile.print(e.odom.imu_gravx, 2); _logFile.print(',');
+  _logFile.print(e.odom.imu_gravy, 2); _logFile.print(',');
+  _logFile.print(e.odom.imu_gravz, 2); _logFile.print(',');
+
+  _logFile.print(e.bamo.canVoltage, 2);      _logFile.print(',');
+  _logFile.print(e.bamo.canCurrent, 2);      _logFile.print(',');
+  _logFile.print(e.bamo.power, 2);           _logFile.print(',');
+  _logFile.print(e.bamo.motorTemp2, 1);      _logFile.print(',');
+  _logFile.print(e.bamo.controllerTemp, 1);  _logFile.print(',');
+  _logFile.println(e.bamo.rpm, 0);
 }
 
 /************************* Tasks ***************************/
@@ -234,15 +262,14 @@ void BPMobileTask(void* parameter) {
       bool isRear  = strcmp(clientName, "rear")  == 0;
 
       // mech: both nodes
-      if (now - tMech >= (1000.0 / MECH_SENSORS_SAMPLING_RATE))  
-      publishMechData(&localMech); tMech = now;
+      if (now - tMech >= (1000.0 / MECH_SENSORS_SAMPLING_RATE))         {publishMechData(&localMech); tMech = now;}
 
       // elect + faults + bamo: front only
       if (isFront) {
-        if (now - tElect      >= (1000.0 / ELECT_SENSORS_SAMPLING_RATE))    { publishElectData(&localElect);       tElect = now; }
-        if (now - tElectFault >= (1000.0 / ELECT_FAULT_STAT_SAMPLING_RATE)) { publishElectFaultState(&localElect); tElectFault = now; }
-        if (now - tBAMOpow    >= (1000.0 / BAMO_POWER_SAMPLING_RATE))       { publishBAMOpower(&localBAMO);        tBAMOpow = now; }
-        if (now - tBAMOtemp   >= (1000.0 / BAMO_TEMP_SAMPLING_RATE))        { publishBAMOtemp(&localBAMO);         tBAMOtemp = now; }
+        if (now - tElect      >= (1000.0 / ELECT_SENSORS_SAMPLING_RATE)){ publishElectData(&localElect);       tElect = now; }
+        if (now - tElectFault >= (1000.0 / ELECT_FAULT_SAMPLING_RATE))  { publishElectFaultState(&localElect); tElectFault = now; }
+        if (now - tBAMOpow    >= (1000.0 / BAMO_POWER_SAMPLING_RATE))   { publishBAMOpower(&localBAMO);        tBAMOpow = now; }
+        if (now - tBAMOtemp   >= (1000.0 / BAMO_TEMP_SAMPLING_RATE))    { publishBAMOtemp(&localBAMO);         tBAMOtemp = now; }
       }
 
       // odom: rear only
@@ -261,20 +288,35 @@ void sdTask(void* parameter) {
 
   while (true) {
     if (xQueueReceive(sdQueue, &entry, portMAX_DELAY) == pdTRUE) {
-      if (!sdCardReady || !SD32_isPersistentFileOpen()) continue;
+      if (!sdCardReady || !isLogFileOpen()) continue;
 
       if (localDataPoint > 0 && localDataPoint % SD_MAX_ROWS == 0) {
-        SD32_closePersistentFile();
+        closeLogFile();
         fileIndex++;
         SD32_generateFilenameInDir(csvFilename, sessionDirPath, "File", fileIndex);
         SD32_createCSVFile(csvFilename, CSV_HEADER);
-        SD32_openPersistentFile(csvFilename);
+        openLogFile(csvFilename);
         Serial.printf("[SD] Row limit reached, rotated to: %s\n", csvFilename);
       }
 
-      AppenderFunc apps[1] = { writeWholeRow };
-      void*        data[1] = { &entry };
-      SD32_appendBulkDataPersistent(apps, data, 1, SD_FLUSH_INTERVAL, SD_CLOSE_INTERVAL);
+      writeLogRow(entry);
+
+      unsigned long now = millis();
+      if (SD_FLUSH_INTERVAL == 0 || (now - _logLastFlush >= SD_FLUSH_INTERVAL)) {
+        _logFile.flush();
+        _logLastFlush = now;
+      }
+      if (SD_CLOSE_INTERVAL > 0 && (now - _logLastClose >= SD_CLOSE_INTERVAL)) {
+        _logFile.flush();
+        _logFile.close();
+        _logFile = SD.open(_logFilePath, FILE_APPEND);
+        if (!_logFile) {
+          _logFileOpen = false;
+          Serial.println("[SD] ERROR: Could not reopen log file after cycle!");
+        }
+        _logLastClose = now;
+      }
+
       localDataPoint++;
     }
   }
@@ -320,16 +362,18 @@ void sensorTask(void* parameter) {
   Electrical localElect;
   Odometry   localOdom;
 
+  bool isFront = strcmp(clientName, "front") == 0;
+  bool isRear  = strcmp(clientName, "rear")  == 0;
+
   while (true) {
     #if MOCK_FLAG == 0
       StrokesensorUpdate(&localMech, STR_Heave, STR_Roll);
-      ElectSensorsUpdate(&localElect, ElectPinArray);
-      GPSupdate(&localOdom, gpsSerial, gps, GPSavailable);
-      IMUupdate(&localOdom, myimu, IMUavailable);
+      if (isFront) ElectSensorsUpdate(&localElect, ElectPinArray);
+      if (isRear)  { GPSupdate(&localOdom, gpsSerial, gps, GPSavailable); IMUupdate(&localOdom, myimu, IMUavailable); }
     #else
       mockMechanicalData(&localMech);
-      mockElectricalData(&localElect);
-      mockOdometryData(&localOdom);
+      if (isFront) mockElectricalData(&localElect);
+      if (isRear)  mockOdometryData(&localOdom);
     #endif
 
     if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
@@ -391,9 +435,7 @@ void canTask(void* parameter) {
     }
 
     if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-      if (myBAMOCar.canVoltageValid && myBAMOCar.canCurrentValid) {
-        myBAMOCar.power = myBAMOCar.canVoltage * myBAMOCar.canCurrent;
-      }
+      myBAMOCar.power = myBAMOCar.canVoltage * myBAMOCar.canCurrent;
       xSemaphoreGive(dataMutex);
     }
 
@@ -404,20 +446,15 @@ void canTask(void* parameter) {
 /************************* Setup ***************************/
 
 void setup() {
+  bool isFront = strcmp(clientName, "front") == 0;
+  bool isRear  = strcmp(clientName, "rear")  == 0;
+
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
   Serial.begin(UART0_BAUD);
-
-  // I2C Init: Wire1 for RTC, Wire for IMU
+  // --- I2C Init: Wire1 for RTC, Wire for IMU
   I2C1_connect = Wire1.begin(I2C1_SDA, I2C1_SCL);
-  I2C2_connect = Wire.begin(IMU_SDA, IMU_SCL);
   Wire1.setTimeout(2);
-  Wire.setTimeout(2);
-
-  // CAN Bus Init
-  canBusReady = CAN32_initCANBus(CAN_TX_PIN, CAN_RX_PIN,
-    TWAI_TIMING_CONFIG_500KBITS(), TWAI_FILTER_CONFIG_ACCEPT_ALL());
-
-  // RTC Init
+  // --- RTC Init
   RTCavailable = RTCinit(rtc, &Wire1);
   if (RTCavailable) {
     #if TIME_SRC == 0
@@ -428,16 +465,27 @@ void setup() {
     settimeofday(&tv, NULL);
     Serial.println("[RTC] ESP32 system clock set from DS3231");
   }
-
-  // Motion Sensor Init
-  IMUavailable = IMUinit(&Wire, myimu);
-  delay(1000);
-  IMUcalibrate(myimu, IMUavailable);
-  GPSavailable = GPSinit(gpsSerial, GPS_TX_PIN, GPS_RX_PIN, GPS_BAUD);
-
-  // Base Sensor Init
-  StrokesensorInit(STR_Heave, STR_Roll);
-  ElectSensorsInit(ElectPinArray);
+  // --- init every Rear sensors 
+  if(isRear){
+    StrokesensorInit(STR_Heave, STR_Roll);
+    // Motion Sensor Init
+    I2C2_connect = Wire.begin(IMU_SDA, IMU_SCL);
+    Wire.setTimeout(2);
+    IMUavailable = IMUinit(&Wire, myimu);
+    delay(1000);
+    IMUcalibrate(myimu, IMUavailable);
+    GPSavailable = GPSinit(gpsSerial, GPS_TX_PIN, GPS_RX_PIN, GPS_BAUD);
+  }
+  // --- init every front sensors
+  if(isFront){
+    // Base Sensor Init
+    StrokesensorInit(STR_Heave, STR_Roll);
+    ElectSensorsInit(ElectPinArray);
+  }
+  
+  // CAN Bus Init
+  canBusReady = CAN32_initCANBus(CAN_TX_PIN, CAN_RX_PIN,
+    TWAI_TIMING_CONFIG_500KBITS(), TWAI_FILTER_CONFIG_ACCEPT_ALL());
 
   // WiFi Init
   #if WIFI_ENABLED == 1
@@ -463,38 +511,10 @@ void setup() {
   #elif WS_ENABLED == 0
   Serial.println("[WS] Disabled (WS_ENABLED=0)");
   #endif
-
-  // SD Card Init
-  #if SD_ENABLED == 1
-  SD32_initSDCard(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN, sdCardReady);
-  if (sdCardReady) {
-    SD32_createSessionDir(sessionNumber, sessionDirPath, "Node");
-    SD32_generateFilenameInDir(csvFilename, sessionDirPath, "File", fileIndex);
-    SD32_createCSVFile(csvFilename, CSV_HEADER);
-    SD32_openPersistentFile(csvFilename);
-  }
-  #else
-  Serial.println("[SD] Disabled (SD_ENABLED=0)");
-  #endif
-
-  // Time Sync
-  #if calibrate_RTC == 1
-    RTCcalibrate(rtc, (ntpready) ? (WiFi32_getNTPTime() / 1000ULL) : 1000000000000ULL, RTCavailable);
-  #endif
-  syncTime_setSyncPoint(RTC_UNIX_TIME,
-    (RTCavailable) ? (uint64_t)RTC_getUnix(rtc, RTCavailable) * 1000ULL : 1000000000000ULL);
-
-  Serial.println("==================================================");
-  Serial.println("BP Bridge Sensor Node - Unified - Ready");
-  Serial.println("==================================================");
-  Serial.printf("Client: %s\n\n", clientName);
-
+  
   // FreeRTOS
   dataMutex = xSemaphoreCreateMutex();
   serialMutex = xSemaphoreCreateMutex();
-  #if SD_ENABLED == 1
-  sdQueue = xQueueCreate(30, sizeof(SDLogEntry));
-  #endif
 
   // Core 0
   #if WIFI_ENABLED == 1 && (WS_ENABLED == 1 || WS_ENABLED == 2)
@@ -503,26 +523,46 @@ void setup() {
   #else
   Serial.println("[RTOS] BPMobile task SKIPPED (WIFI_ENABLED=0 or WS_ENABLED=0)");
   #endif
-
+  
+  // Core 1 (Sensor, CAN, Time sync)
   xTaskCreatePinnedToCore(timeSyncTask, "TimeSyncTask", 4096, NULL, 3, &timeSyncTaskHandle, 0);
   Serial.println("[RTOS] TimeSync task on Core 0 (pri 3)");
-
-  // Core 1
   #if MOCK_FLAG == 0
   xTaskCreatePinnedToCore(sensorTask, "SensorTask", 8192, NULL, 5, &sensorTaskHandle, 1);
   Serial.println("[RTOS] Sensor task on Core 1 (pri 5)");
-  xTaskCreatePinnedToCore(canTask, "CANTask", 4096, NULL, 5, &canTaskHandle, 1);
-  Serial.println("[RTOS] CAN task on Core 1 (pri 5)");
+  if(isFront){
+    xTaskCreatePinnedToCore(canTask, "CANTask", 4096, NULL, 5, &canTaskHandle, 1);
+    Serial.println("[RTOS] CAN task on Core 1 (pri 5)");
+  }
   #else
   Serial.println("[RTOS] Sensor/CAN tasks SKIPPED (MOCK_FLAG=1)");
   #endif
-
+  // Core 1 (SD init, and pinned task)
   #if SD_ENABLED == 1
+  SD32_initSDCard(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN, sdCardReady);
+  if (sdCardReady) {
+    SD32_createSessionDir(sessionNumber, sessionDirPath, "Node");
+    SD32_generateFilenameInDir(csvFilename, sessionDirPath, "File", fileIndex);
+    SD32_createCSVFile(csvFilename, CSV_HEADER);
+    openLogFile(csvFilename);
+  }
+  sdQueue = xQueueCreate(30, sizeof(SDLogEntry)); // create Queue to share data between 
   xTaskCreatePinnedToCore(sdTask, "SDTask", 4096, NULL, 2, &sdTaskHandle, 1);
   Serial.println("[RTOS] SD Logger task on Core 1 (pri 2)");
   #else
+  Serial.println("[SD] Disabled (SD_ENABLED=0)");
   Serial.println("[RTOS] SD Logger task SKIPPED (SD_ENABLED=0)");
   #endif
+  // Time calibration
+  #if calibrate_RTC == 1
+    RTCcalibrate(rtc, (ntpready) ? (WiFi32_getNTPTime() / 1000ULL) : 1000000000000ULL, RTCavailable);
+  #endif
+  syncTime_setSyncPoint(RTC_UNIX_TIME,
+    (RTCavailable) ? (uint64_t)RTC_getUnix(rtc, RTCavailable) * 1000ULL : 1000000000000ULL);
+  Serial.println("==================================================");
+  Serial.println("BP Bridge Sensor Node - Unified - Ready");
+  Serial.println("==================================================");
+  Serial.printf("Client: %s\n\n", clientName);
 }
 
 /************************* Main Loop ***************************/
@@ -531,6 +571,7 @@ void loop() {
   uint64_t SESSION_TIME_MS = millis();
   uint64_t CURRENT_UNIX_TIME_MS = syncTime_calcRelative_ms(RTC_UNIX_TIME);
 
+  // Time calibration debug display
   #if calibrate_RTC == 1
     char timeBuf[32];
     syncTime_formatUnix(timeBuf, CURRENT_UNIX_TIME_MS, 7);
@@ -539,6 +580,7 @@ void loop() {
     return;
   #endif
 
+  // Debug mode load data from semaphores
   #if DEBUG_MODE > 0
   if (SESSION_TIME_MS - lastTeleplotDebug >= TELEPLOT_DEBUG_INTERVAL) {
     Mechanical debugMech;
@@ -568,6 +610,7 @@ void loop() {
   }
   #endif
 
+  // press ` to read device status , press ~ to exit
   if (Serial.available() && Serial.peek() == '`') {
     Serial.read();
     while (1) {
@@ -577,19 +620,25 @@ void loop() {
     }
   }
 
+  // Mock
   #if MOCK_FLAG == 1
     if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
       mockMechanicalData(&myMechData);
-      mockElectricalData(&myElectData);
-      mockOdometryData(&myOdometryData);
-      mockBAMOCarData(&myBAMOCar);
+      if (strcmp(clientName, "front") == 0) {
+        mockElectricalData(&myElectData);
+        mockBAMOCarData(&myBAMOCar);
+      }
+      if (strcmp(clientName, "rear") == 0) {
+        mockOdometryData(&myOdometryData);
+      }
       xSemaphoreGive(dataMutex);
     }
   #endif
-
+  
+  // SD queuing
   #if SD_ENABLED == 1
   if (sdCardReady && !SD32_checkSDconnect()) {
-    SD32_closePersistentFile();
+    closeLogFile();
     sdCardReady = false;
     Serial.println("[SD] Card removed");
   }
@@ -707,16 +756,12 @@ void publishBAMOpower(BAMOCar* b) {
   uint64_t timestamp = syncTime_calcRelative_ms(RTC_UNIX_TIME);
   JsonDocument doc;
   doc["type"]  = "data";
-  doc["node"]  = clientName;
   doc["group"] = "bamo.power";
   doc["ts"]    = timestamp;
   doc["d"]["canVoltage"]      = b->canVoltage;
   doc["d"]["canCurrent"]      = b->canCurrent;
   doc["d"]["power"]           = b->power;
-  doc["d"]["canVoltageValid"] = b->canVoltageValid;
-  doc["d"]["canCurrentValid"] = b->canCurrentValid;
   doc["d"]["rpm"]             = b->rpm;
-  doc["d"]["rpmValid"]        = b->rpmValid;
   String msg;
   serializeJson(doc, msg);
   BPwebSocket->sendTXT(msg);
@@ -726,13 +771,10 @@ void publishBAMOtemp(BAMOCar* b) {
   uint64_t timestamp = syncTime_calcRelative_ms(RTC_UNIX_TIME);
   JsonDocument doc;
   doc["type"]  = "data";
-  doc["node"]  = clientName;
   doc["group"] = "bamo.temp";
   doc["ts"]    = timestamp;
   doc["d"]["motorTemp"]      = b->motorTemp2;
   doc["d"]["controllerTemp"] = b->controllerTemp;
-  doc["d"]["motorTempValid"] = b->motorTempValid;
-  doc["d"]["ctrlTempValid"]  = b->controllerTempValid;
   String msg;
   serializeJson(doc, msg);
   BPwebSocket->sendTXT(msg);
@@ -747,7 +789,7 @@ void registerClient(const char* clientName) {
   JsonArray groups = doc["groups"].to<JsonArray>();
   JsonObject g1 = groups.add<JsonObject>(); g1["group"] = "mech";       g1["rate_hz"] = MECH_SENSORS_SAMPLING_RATE;
   JsonObject g2 = groups.add<JsonObject>(); g2["group"] = "elect";      g2["rate_hz"] = ELECT_SENSORS_SAMPLING_RATE;
-  JsonObject g3 = groups.add<JsonObject>(); g3["group"] = "faults";     g3["rate_hz"] = ELECT_FAULT_STAT_SAMPLING_RATE;
+  JsonObject g3 = groups.add<JsonObject>(); g3["group"] = "faults";     g3["rate_hz"] = ELECT_FAULT_SAMPLING_RATE;
   JsonObject g4 = groups.add<JsonObject>(); g4["group"] = "odom";       g4["rate_hz"] = ODOM_SENSORS_SAMPLING_RATE;
   JsonObject g5 = groups.add<JsonObject>(); g5["group"] = "bamo.power"; g5["rate_hz"] = BAMO_POWER_SAMPLING_RATE;
   JsonObject g6 = groups.add<JsonObject>(); g6["group"] = "bamo.temp";  g6["rate_hz"] = BAMO_TEMP_SAMPLING_RATE;
@@ -794,14 +836,9 @@ void registerClient(const char* clientName) {
   addEntry("bamo.power.canVoltage",      "float", "V", "bamo.power");
   addEntry("bamo.power.canCurrent",      "float", "A", "bamo.power");
   addEntry("bamo.power.power",           "float", "W", "bamo.power");
-  addEntry("bamo.power.canVoltageValid", "bool",  "",    "bamo.power");
-  addEntry("bamo.power.canCurrentValid", "bool",  "",    "bamo.power");
   addEntry("bamo.power.rpm",             "float", "RPM", "bamo.power");
-  addEntry("bamo.power.rpmValid",        "bool",  "",    "bamo.power");
   addEntry("bamo.temp.motorTemp",        "float", "C", "bamo.temp");
   addEntry("bamo.temp.controllerTemp",   "float", "C", "bamo.temp");
-  addEntry("bamo.temp.motorTempValid",   "bool",  "",  "bamo.temp");
-  addEntry("bamo.temp.ctrlTempValid",    "bool",  "",  "bamo.temp");
 
   String registration;
   serializeJson(doc, registration);

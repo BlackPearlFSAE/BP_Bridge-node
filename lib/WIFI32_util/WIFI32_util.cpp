@@ -14,7 +14,9 @@ static bool _ntpInitialized = false;
 void initWiFi(const char* ssid, const char* password, int attempt) {
   Serial.println("--- WiFi Initialization ---");
   Serial.printf("Connecting to: %s\n",ssid);
+  WiFi.disconnect(true);
   WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(false);
   WiFi.begin(ssid, password);
 
   int attempts = 0;
@@ -26,6 +28,7 @@ void initWiFi(const char* ssid, const char* password, int attempt) {
   Serial.println();
 
   if (WiFi.status() != WL_CONNECTED) {
+    WiFi.disconnect(true);
     Serial.println("WiFi connection FAILED!");
     return;
   }

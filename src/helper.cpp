@@ -263,7 +263,6 @@ void process_ResponseBamocarMsg(twai_message_t* msg, BAMOCar* bamocar) {
     if (regAddress == BAMOCAR_REG_MOTOR_TEMP) {
       bamocar->motorTemp1 = (float)msg->data[1] / 10.0;
       bamocar->motorTemp2 = bamocar->motorTemp1 + 8.0;
-      bamocar->motorTempValid = true;
       Serial.print("[CAN DECODED] Motor Temp: ");
       Serial.print(bamocar->motorTemp2, 1);
       Serial.print(" °C (raw byte: 0x");
@@ -274,7 +273,6 @@ void process_ResponseBamocarMsg(twai_message_t* msg, BAMOCar* bamocar) {
     }
     else if (regAddress == BAMOCAR_REG_CONTROLLER_TEMP) {
       bamocar->controllerTemp = convertNTCtoTemp(rawValue);
-      bamocar->controllerTempValid = true;
       Serial.print("[CAN DECODED] Controller Temp: ");
       Serial.print(bamocar->controllerTemp, 1);
       Serial.print(" °C (resistance: ");
@@ -283,7 +281,6 @@ void process_ResponseBamocarMsg(twai_message_t* msg, BAMOCar* bamocar) {
     }
     else if (regAddress == BAMOCAR_REG_DC_VOLTAGE) {
       bamocar->canVoltage = (float)rawValue / 55.1204;
-      bamocar->canVoltageValid = true;
       Serial.print("[CAN DECODED] DC Voltage: ");
       Serial.print(bamocar->canVoltage, 2);
       Serial.print(" V (raw: ");
@@ -295,7 +292,6 @@ void process_ResponseBamocarMsg(twai_message_t* msg, BAMOCar* bamocar) {
         Serial.println("[CAN DECODED] DC Current: INVALID (0xFFFF) - ignored");
       } else {
         bamocar->canCurrent = (float)rawValue * 0.373832;
-        bamocar->canCurrentValid = true;
         Serial.print("[CAN DECODED] DC Current: ");
         Serial.print(bamocar->canCurrent, 2);
         Serial.print(" A (raw: ");
@@ -307,7 +303,6 @@ void process_ResponseBamocarMsg(twai_message_t* msg, BAMOCar* bamocar) {
       // Signed: negative = reverse. Scale: RPM = Num / 32767 * N-100%
       // (was: 3000.0f / 32767.0f — wrong hardcoded value, replaced by BAMOCAR_N100_RPM)
       bamocar->rpm = (float)(int16_t)rawValue * (BAMOCAR_N100_RPM / 32767.0f);
-      bamocar->rpmValid = true;
       Serial.print("[CAN DECODED] RPM: ");
       Serial.print(bamocar->rpm, 0);
       Serial.print(" RPM (raw: ");
@@ -334,16 +329,11 @@ void process_ResponseBamocarMsg(twai_message_t* msg, BAMOCar* bamocar) {
 void mockBAMOCarData(BAMOCar* b) {
   b->motorTemp1 = 55.0 + random(-10, 15);
   b->motorTemp2 = b->motorTemp1 + random(5, 10);
-  b->motorTempValid = true;
   b->controllerTemp = 50.0 + random(-10, 15);
-  b->controllerTempValid = true;
   b->canVoltage = 220.0 + random(-20, 20);
-  b->canVoltageValid = true;
   b->canCurrent = 30.0 + random(-10, 50);
-  b->canCurrentValid = true;
   b->power = b->canVoltage * b->canCurrent;
   b->rpm = 2500.0 + random(-500, 500);
-  b->rpmValid = true;
 }
 
 void teleplotBAMOCar(BAMOCar* b) {
