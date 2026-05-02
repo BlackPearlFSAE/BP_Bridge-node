@@ -344,3 +344,4 @@ void teleplotBAMOCar(BAMOCar* b) {
   Serial.printf(">BAMO_CtrlTemp:%.1f\n", b->controllerTemp);
   Serial.printf(">BAMO_RPM:%.0f\n", b->rpm);
 }
+

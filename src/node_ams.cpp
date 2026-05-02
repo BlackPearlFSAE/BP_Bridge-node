@@ -70,7 +70,8 @@ bool canBusReady = false;
 const unsigned long LOCAL_SYNC_INTERVAL = DEFAULT_LOCAL_SYNC_INTERVAL;
 const unsigned long REMOTE_SYNC_INTERVAL = DEFAULT_REMOTE_SYNC_INTERVAL;
 
-const unsigned long SD_APPEND_INTERVAL = DEFAULT_SD_LOG_INTERVAL;
+const unsigned long SD_APPEND_INTERVAL = DEFAULT_SD_APPEND_INTERVAL;
+const unsigned long SD_BATCH_WRITE_INTERVAL = DEFAULT_SD_BATCH_WRITE_INTERVAL;
 const unsigned long SD_FLUSH_INTERVAL = DEFAULT_SD_FLUSH_INTERVAL;
 const unsigned long SD_CLOSE_INTERVAL = DEFAULT_SD_CLOSE_INTERVAL;
 const int SD_MAX_ROWS = DEFAULT_SD_ROW_LIMIT;
@@ -129,8 +130,7 @@ void publishBMUfaults(BMUdata* bmu, int moduleNum);
 void registerClient(const char* clientName);
 void process_BMU_CANmsg(twai_message_t *receivedframe, BMUdata *BMU_Package, int moduleNum);
 // File Management
-void showDeviceStatus();
-void append_BMU_toCSV(File& dataFile, BMUdata* bmu, int dp, uint64_t Timestamp, uint64_t session);
+void append_BMU_toCSV(int moduleIdx, BMUdata* bmu, int dp, uint64_t Timestamp, uint64_t session);
 void createPartitionDir();
 void openAllFiles();
 void closeAllFiles();
@@ -158,6 +158,28 @@ struct SDLogEntry {
 static File bmuFiles[MODULE_NUM];
 static bool filesOpen = false;
 static volatile bool closeRequested = false;  // Signal from loop() to sdTask
+
+// ---- batch_SDwrite: per-BMU RAM ring drained to SD on a 1s cadence ----
+// At 20Hz × 1s = 20 rows per BMU × ~250B = ~5KB. 4KB ring is enough headroom
+// since drain happens proactively at high-water mark too.
+#define SD_BATCH_BUF_SIZE   (4 * 1024)
+#define SD_BATCH_FLUSH_HIGH (SD_BATCH_BUF_SIZE - 384)  // leave room for one row
+
+static char     _bmuBatchBuf[MODULE_NUM][SD_BATCH_BUF_SIZE];
+static size_t   _bmuBatchLen[MODULE_NUM] = {0};
+static unsigned long _batchLastDrain = 0;
+
+// Drain all per-BMU rings into one SD.write() per file, then optionally fsync.
+static void batch_SDwrite(bool fsync) {
+  if (!filesOpen) return;
+  for (int i = 0; i < MODULE_NUM; i++) {
+    if (_bmuBatchLen[i] == 0 || !bmuFiles[i]) continue;
+    bmuFiles[i].write((const uint8_t*)_bmuBatchBuf[i], _bmuBatchLen[i]);
+    _bmuBatchLen[i] = 0;
+    if (fsync) bmuFiles[i].flush();
+  }
+  _batchLastDrain = millis();
+}
 
 // Core 0: WiFi/WebSocket Task
 void BPMobileTask(void* parameter) {
@@ -249,16 +271,21 @@ void sdTask(void* parameter) {
 
       unsigned long now = millis();
 
-      // Write one row to each BMU file (one file per battery module)
+      // Append one row to each BMU's RAM ring (no SD I/O yet)
       for (int i = 0; i < MODULE_NUM; i++) {
         if (bmuFiles[i]) {
-          append_BMU_toCSV(bmuFiles[i], &entry.bmu[i], entry.dataPoint, entry.unixTime, entry.sessionTime);
+          append_BMU_toCSV(i, &entry.bmu[i], entry.dataPoint, entry.unixTime, entry.sessionTime);
         }
       }
 
-      // Periodic flush
+      // Time-based batch drain: every SD_BATCH_WRITE_INTERVAL push all rings to SD
+      if (now - _batchLastDrain >= SD_BATCH_WRITE_INTERVAL) {
+        batch_SDwrite(false);
+      }
+
+      // Periodic fsync (drains rings too so disk state is consistent)
       if (now - lastFlushTime >= SD_FLUSH_INTERVAL) {
-        flushAllFiles();
+        batch_SDwrite(true);
         lastFlushTime = now;
       }
 
@@ -607,10 +634,12 @@ void openAllFiles() {
     }
   }
   filesOpen = true;
+  _batchLastDrain = millis();
   Serial.println("[SD Card] All files opened for logging");
 }
 
 void closeAllFiles() {
+  batch_SDwrite(false);  // drain RAM rings before closing
   for (int i = 0; i < MODULE_NUM; i++) {
     if (bmuFiles[i]) {
       bmuFiles[i].flush();
@@ -629,11 +658,12 @@ void flushAllFiles() {
   }
 }
 
-/************************* CSV Appenders ***************************/
+// Append one BMU row into module i's RAM ring; drain proactively at high-water.
+void append_BMU_toCSV(int i, BMUdata* bmu, int dp, uint64_t Timestamp, uint64_t session) {
+  if (_bmuBatchLen[i] >= SD_BATCH_FLUSH_HIGH) batch_SDwrite(false);
 
-void append_BMU_toCSV(File& dataFile, BMUdata* bmu, int dp, uint64_t Timestamp, uint64_t session) {
-  char buf[384];
-  int n = snprintf(buf, sizeof(buf),
+  int n = snprintf(_bmuBatchBuf[i] + _bmuBatchLen[i],
+                   SD_BATCH_BUF_SIZE - _bmuBatchLen[i],
     "%d,%llu,%llu,"
     "%.2f,%.1f,%.1f,%.2f,"
     "%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,"
@@ -654,7 +684,7 @@ void append_BMU_toCSV(File& dataFile, BMUdata* bmu, int dp, uint64_t Timestamp, 
     bmu->OVERDIV_VOLTAGE_WARNING, bmu->OVERDIV_VOLTAGE_CRITICAL,
     bmu->BalancingDischarge_Cells, bmu->BMUconnected, bmu->BMUneedBalance
   );
-  if (n > 0) dataFile.write((const uint8_t*)buf, n);
+  if (n > 0) _bmuBatchLen[i] += (size_t)n;
 }
 
 /************************* BPMobile Publishers ***************************/
@@ -762,7 +792,6 @@ void publishBMUfaults(BMUdata* bmu, int moduleNum) {
   if (n > 0) BPwebSocket->sendTXT(buf, n);
 }
 
-
 /************************* Teleplot Debug Functions ***************************/
 
 void teleplotBMU(BMUdata *bmu, int moduleNum) {
@@ -771,18 +800,4 @@ void teleplotBMU(BMUdata *bmu, int moduleNum) {
   Serial.printf(">BMU%d_TEMP2:%.1f\n", moduleNum, (bmu->TEMP_SENSE[1] * 0.5f) - 40.0f);
   Serial.printf(">BMU%d_DV:%.2f\n", moduleNum, bmu->DV * 0.1f);
   Serial.printf(">BMU%d_Connected:%d\n", moduleNum, bmu->BMUconnected ? 1 : 0);
-}
-
-void showDeviceStatus() {
-  Serial.println("╔═════════════════════════════════════════════╗");
-  Serial.println("║         AMS NODE - SYSTEM STATUS            ║");
-  Serial.println("╠═════════════════════════════════════════════╣");
-  Serial.printf("║ I2C1:         %s\n", I2C1_connect ? "OK" : "FAIL");
-  Serial.printf("║ CAN Bus:      %s\n", canBusReady ? "OK" : "FAIL");
-  Serial.printf("║ SD Card:      %s\n", sdCardReady ? "OK" : "FAIL");
-  Serial.printf("║ WiFi:         %s (RSSI: %d)\n", WiFi.status() == WL_CONNECTED ? "OK" : "FAIL", WiFi.RSSI());
-  Serial.printf("║ RTC:          %s\n", RTCavailable ? "OK" : "FAIL");
-  Serial.printf("║ WebSocket:    %s\n", BPsocketstatus->isConnected ? "OK" : "FAIL");
-  Serial.printf("║ Time Sync:    %s\n", syncTime_isSynced() ? "OK" : "FAIL");
-  Serial.println("╚═════════════════════════════════════════════╝");
 }

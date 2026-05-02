@@ -89,7 +89,8 @@ bool canBusReady   = false;
 #define BAMOCarREQ_INTERVAL 200
 const unsigned long LOCAL_SYNC_INTERVAL  = DEFAULT_LOCAL_SYNC_INTERVAL;
 const unsigned long REMOTE_SYNC_INTERVAL = DEFAULT_REMOTE_SYNC_INTERVAL;
-const unsigned long SD_APPEND_INTERVAL = DEFAULT_SD_LOG_INTERVAL;
+const unsigned long SD_APPEND_INTERVAL  = DEFAULT_SD_APPEND_INTERVAL;
+const unsigned long SD_BATCH_WRITE_INTERVAL  = DEFAULT_SD_BATCH_WRITE_INTERVAL;
 const unsigned long SD_FLUSH_INTERVAL  = DEFAULT_SD_FLUSH_INTERVAL;
 const unsigned long SD_CLOSE_INTERVAL  = DEFAULT_SD_CLOSE_INTERVAL;
 const int           SD_MAX_ROWS        = DEFAULT_SD_ROW_LIMIT;
@@ -127,8 +128,6 @@ void publishBAMOpower(BAMOCar* b);
 void publishBAMOtemp(BAMOCar* b);
 void registerClient(const char* clientName);
 
-void showDeviceStatus();
-
 /************************* FreeRTOS ***************************/
 
 SemaphoreHandle_t dataMutex = NULL;
@@ -150,13 +149,28 @@ struct SDLogEntry {
   BAMOCar    bamo;
 };
 
+
 /************************* SD open write flush, close system ***************************/
+// Forward declaration so closeLogFile() can drain the batch ring first
+static void batch_SDwrite(bool fsync);
+static void append_sensors_toCSV(const SDLogEntry& e);
 
 static File      _logFile;
 static bool      _logFileOpen    = false;
 static char      _logFilePath[48] = {0};
 static unsigned long _logLastFlush = 0;
 static unsigned long _logLastClose = 0;
+
+// ---- batch_SDwrite: RAM ring buffer drained to SD on a 1s cadence ----
+// Sized for ~30 worst-case rows (~500B each = 15KB). At 20Hz with 1s drain
+// we produce ~20 rows; the extra headroom absorbs an SD stall while the
+// queue keeps filling.
+#define SD_BATCH_BUF_SIZE   (16 * 1024)
+#define SD_BATCH_FLUSH_HIGH (SD_BATCH_BUF_SIZE - 768)  // leave room for one row
+
+static char     _batchBuf[SD_BATCH_BUF_SIZE];
+static size_t   _batchLen = 0;
+static unsigned long _batchLastDrain = 0;
 
 static bool openLogFile(const char* path) {
   _logFile = SD.open(path, FILE_APPEND);
@@ -169,12 +183,14 @@ static bool openLogFile(const char* path) {
   _logFilePath[sizeof(_logFilePath) - 1] = '\0';
   _logFileOpen  = true;
   _logLastFlush = millis();
+  _batchLastDrain = _logLastFlush;
   Serial.printf("[SD] Log file opened: %s\n", path);
   return true;
 }
 
 static void closeLogFile() {
   if (_logFileOpen && _logFile) {
+    batch_SDwrite(false);  // drain RAM ring before closing
     _logFile.flush();
     _logFile.close();
     _logFileOpen = false;
@@ -185,9 +201,25 @@ static void closeLogFile() {
 
 static bool isLogFileOpen() { return _logFileOpen; }
 
+// Drain the RAM ring into one SD.write() call, then optionally fsync.
+static void batch_SDwrite(bool fsync) {
+  if (!_logFileOpen || _batchLen == 0) return;
+  _logFile.write((const uint8_t*)_batchBuf, _batchLen);
+  _batchLen = 0;
+  _batchLastDrain = millis();
+  if (fsync) {
+    _logFile.flush();
+    _logLastFlush = _batchLastDrain;
+  }
+}
+
+// Append one CSV row to the RAM ring. If snprintf would overflow the ring,
+// drain first and retry. Single SD.write() per drain is the win.
 static void append_sensors_toCSV(const SDLogEntry& e) {
-  char buf[512];
-  int n = snprintf(buf, sizeof(buf),
+  // Drain proactively if we're near the high-water mark
+  if (_batchLen >= SD_BATCH_FLUSH_HIGH) batch_SDwrite(false);
+
+  int n = snprintf(_batchBuf + _batchLen, SD_BATCH_BUF_SIZE - _batchLen,
     "%d,%llu,%llu,"
     "%.2f,%.2f,%.2f,%.2f,"
     "%.2f,%.2f,%.2f,%.2f,%d,%d,%d,%d,%.2f,"
@@ -212,7 +244,7 @@ static void append_sensors_toCSV(const SDLogEntry& e) {
     e.bamo.canVoltage, e.bamo.canCurrent, e.bamo.power,
     e.bamo.motorTemp2, e.bamo.controllerTemp, e.bamo.rpm
   );
-  if (n > 0) _logFile.write((const uint8_t*)buf, n);
+  if (n > 0) _batchLen += (size_t)n;
 }
 
 /************************* Tasks ***************************/
@@ -283,11 +315,20 @@ void sdTask(void* parameter) {
       append_sensors_toCSV(entry);
 
       unsigned long now = millis();
-      if (SD_FLUSH_INTERVAL == 0 || (now - _logLastFlush >= SD_FLUSH_INTERVAL)) {
-        _logFile.flush();
-        _logLastFlush = now;
+
+      // Time-based batch drain: every SD_BATCH_WRITE_INTERVAL push the RAM ring to SD
+      if (now - _batchLastDrain >= SD_BATCH_WRITE_INTERVAL) {
+        batch_SDwrite(false);
       }
+
+      // Periodic fsync (drains ring too so disk state is consistent)
+      if (SD_FLUSH_INTERVAL > 0 && (now - _logLastFlush >= SD_FLUSH_INTERVAL)) {
+        batch_SDwrite(true);
+      }
+
+      // Periodic close/reopen: drain first, then cycle the FAT entry
       if (SD_CLOSE_INTERVAL > 0 && (now - _logLastClose >= SD_CLOSE_INTERVAL)) {
+        batch_SDwrite(false);
         _logFile.flush();
         _logFile.close();
         _logFile = SD.open(_logFilePath, FILE_APPEND);
@@ -591,16 +632,6 @@ void loop() {
   }
   #endif
 
-  // press ` to read device status , press ~ to exit
-  if (Serial.available() && Serial.peek() == '`') {
-    Serial.read();
-    while (1) {
-      showDeviceStatus();
-      if (Serial.available() && Serial.read() == '~') break;
-      delay(200);
-    }
-  }
-
   // Mock
   #if MOCK_FLAG == 1
     if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
@@ -796,23 +827,4 @@ void registerClient(const char* clientName) {
   serializeJson(doc, registration);
   Serial.println("[WS] Sending registration...");
   BPwebSocket->sendTXT(registration);
-}
-
-/************************* Debug Functions ***************************/
-
-void showDeviceStatus() {
-  Serial.println("╔═════════════════════════════════════════════╗");
-  Serial.println("║        UNIFIED NODE - SYSTEM STATUS         ║");
-  Serial.println("╠═════════════════════════════════════════════╣");
-  Serial.printf("║ I2C1 (RTC):   %s\n", I2C1_connect ? "OK" : "FAIL");
-  Serial.printf("║ I2C2 (IMU):   %s\n", I2C2_connect ? "OK" : "FAIL");
-  Serial.printf("║ CAN Bus:      %s\n", canBusReady ? "OK" : "FAIL");
-  Serial.printf("║ SD Card:      %s\n", sdCardReady ? "OK" : "FAIL");
-  Serial.printf("║ WiFi:         %s (RSSI: %d)\n", WiFi.status() == WL_CONNECTED ? "OK" : "FAIL", WiFi.RSSI());
-  Serial.printf("║ RTC:          %s\n", RTCavailable ? "OK" : "FAIL");
-  Serial.printf("║ IMU:          %s\n", IMUavailable ? "OK" : "FAIL");
-  Serial.printf("║ GPS:          %s\n", gpsSerial.available() > 0 ? "OK" : "FAIL");
-  Serial.printf("║ WebSocket:    %s\n", BPsocketstatus->isConnected ? "OK" : "FAIL");
-  Serial.printf("║ Time Sync:    %s\n", syncTime_isSynced() ? "OK" : "FAIL");
-  Serial.println("╚═════════════════════════════════════════════╝");
 }

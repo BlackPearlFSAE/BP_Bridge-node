@@ -1,10 +1,11 @@
 /************************* Sites configs ***************************/
 
 // SD card Datalog config  (logging at 20Hz = 50ms/row)
-#define DEFAULT_SD_LOG_INTERVAL   100     // 50ms  -> 20Hz sample rate
-#define DEFAULT_SD_FLUSH_INTERVAL 5000   // 5s    -> flush every ~100 rows
-#define DEFAULT_SD_CLOSE_INTERVAL 30000  // 30s   -> close/reopen every ~600 rows
-#define DEFAULT_SD_ROW_LIMIT      5000   // rotate file after 5000 rows (~4 min at 20Hz)
+#define DEFAULT_SD_APPEND_INTERVAL   50    // sensor->queue interval (ms)
+#define DEFAULT_SD_BATCH_WRITE_INTERVAL 1000   // 1s -> drain RAM ring to SD
+#define DEFAULT_SD_FLUSH_INTERVAL 5000   // 5s -> fsync after a batch write
+#define DEFAULT_SD_CLOSE_INTERVAL 15000  // 15s -> close/reopen file
+#define DEFAULT_SD_ROW_LIMIT      50000   // rotate file after N rows
 
 // Network handling config
 #define DEFAULT_SSID "realme C55"
