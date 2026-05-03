@@ -82,8 +82,8 @@ void teleplotMotion(Odometry* o);
 // N-100% options (set via controller parameter reg 0xC8):
 //   N-100% = 6500 RPM → 1 Num = 6500 / 32767 = 0.1984 RPM/Num
 //   N-100% = 5500 RPM → 1 Num = 5500 / 32767 = 0.1679 RPM/Num  ← selected
-// #define BAMOCAR_N100_RPM 6500.0f
-#define BAMOCAR_N100_RPM 5500.0f
+#define BAMOCAR_N100_RPM 6500.0f
+// #define BAMOCAR_N100_RPM 5500.0f
 
 typedef struct {
   float motorTemp1 = 0.0;

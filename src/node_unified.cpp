@@ -55,6 +55,8 @@ socketstatus webSocketStatus;
 BPMobileConfig BPMobile(&webSockets, &webSocketStatus);
 WebSocketsClient* BPwebSocket = BPMobile.webSocket;
 socketstatus*     BPsocketstatus = BPMobile.webSocketstatus;
+bool isFront = strcmp(clientName, "front") == 0;
+bool isRear  = strcmp(clientName, "rear")  == 0;
 
 // Sampling Rates (Hz)
 const float MECH_SENSORS_SAMPLING_RATE      = DEFAULT_PUBLISH_RATE;
@@ -271,9 +273,6 @@ void BPMobileTask(void* parameter) {
         xSemaphoreGive(dataMutex);
       }
 
-      bool isFront = strcmp(clientName, "front") == 0;
-      bool isRear  = strcmp(clientName, "rear")  == 0;
-
       // mech: both nodes
       if (now - tMech >= (1000.0 / MECH_SENSORS_SAMPLING_RATE))         {publishMechData(&localMech); tMech = now;}
 
@@ -384,9 +383,6 @@ void sensorTask(void* parameter) {
   Electrical localElect;
   Odometry   localOdom;
 
-  bool isFront = strcmp(clientName, "front") == 0;
-  bool isRear  = strcmp(clientName, "rear")  == 0;
-
   while (true) {
     #if MOCK_FLAG == 0
       StrokesensorUpdate(&localMech, STR_Heave, STR_Roll);
@@ -468,8 +464,6 @@ void canTask(void* parameter) {
 /************************* Setup ***************************/
 
 void setup() {
-  bool isFront = strcmp(clientName, "front") == 0;
-  bool isRear  = strcmp(clientName, "rear")  == 0;
 
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
   Serial.begin(UART0_BAUD);
@@ -624,9 +618,15 @@ void loop() {
         debugBAMO.canVoltage, debugBAMO.canCurrent);
     #elif DEBUG_MODE == 2
       teleplotMechanical(&debugMech);
-      teleplotElectrical(&debugElect);
-      teleplotMotion(&debugOdom);
-      teleplotBAMOCar(&debugBAMO);
+      if(isFront) {
+        teleplotElectrical(&debugElect);
+        teleplotBAMOCar(&debugBAMO);
+      }
+      if(isRear) {
+        teleplotMotion(&debugOdom);
+        IMUcalibrate(myimu, IMUavailable);
+      }
+      
     #endif
     lastTeleplotDebug = SESSION_TIME_MS;
   }

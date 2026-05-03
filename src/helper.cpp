@@ -17,9 +17,9 @@ void StrokesensorInit(int Heave, int Roll) {
 
 void StrokesensorUpdate(Mechanical* m, int Heave, int Roll) {
   analogRead(Heave);
-  m->STR_Heave_mm = (float)(analogRead(Heave) * (max_distance1 / pwmres));
+  m->STR_Heave_mm = (float)(analogRead(Heave) * (str_heave_dist_max / pwmres)) - heave_offset_mm;
   analogRead(Roll);
-  m->STR_Roll_mm  = (float)(analogRead(Roll)  * (max_distance2 / pwmres));
+  m->STR_Roll_mm  = (float)(analogRead(Roll)  * (str_roll_dist_max / pwmres)) - roll_offset_mm;
 }
 
 void mockMechanicalData(Mechanical* m) {
@@ -48,11 +48,13 @@ void ElectSensorsUpdate(Electrical* e, int* pins) {
   uint16_t raw_apps     = analogRead(pins[2]);
   uint16_t raw_bpps     = analogRead(pins[3]);
   uint16_t raw_steering = analogRead(pins[8]);
+  // Serial.println(raw_steering);
 
   float volt_i_sense  = (raw_i_sense  / (float)pwmres) * aref;
   float volt_tmp      = (raw_tmp      / (float)pwmres) * aref;
   float volt_bpps     = (raw_bpps     / (float)pwmres) * aref;
   float volt_steering = (raw_steering / (float)pwmres) * aref;
+  // Serial.println(volt_steering);
 
   e->I_SENSE = (volt_i_sense - i_sense_offset) / i_sense_sensitivity;
 
@@ -65,7 +67,11 @@ void ElectSensorsUpdate(Electrical* e, int* pins) {
 
   e->APPS = raw_apps;
   e->BPPS = (volt_bpps - bpps_offset_v) / max_volt5;
-  e->steering = ((volt_steering / steering_aref) * steering_max__angle) - steering_offset_angle;
+  // e->steering = ((volt_steering / steering_aref) * steering_max__angle) ;//+ steering_offset_angle;
+  e->steering = raw_steering;
+
+
+  // Serial.println(e->steering);
 
   e->AMS_OK  = (bool)digitalRead(pins[4]);
   e->IMD_OK  = (bool)digitalRead(pins[5]);
@@ -123,6 +129,9 @@ void GPSupdate(Odometry* o, HardwareSerial& gpsSerial, TinyGPSPlus& gps, bool& a
 }
 
 bool IMUinit([[maybe_unused]] TwoWire* WireIMU, Adafruit_BNO055& bno) {
+  // Default mode is NDOF (requires mag figure-8 for full calibration).
+  // Use bno.begin(Adafruit_BNO055::OPERATION_MODE_IMUPLUS) to disable mag
+  // and get gyro/accel-only relative heading without magnetometer calibration.
   if (!bno.begin()) {
     Serial.println(F("BNO055 not detected. Check wiring or I2C ADDR (0x28/0x29)."));
     return false;
@@ -135,7 +144,7 @@ bool IMUinit([[maybe_unused]] TwoWire* WireIMU, Adafruit_BNO055& bno) {
 void IMUcalibrate(Adafruit_BNO055& bno, bool& available) {
   if (!available) return;
   Serial.println("Reading BNO055 calibration status, move sensor through its ranges");
-  uint8_t system_s, gyro_s, accel_s, mag_s = 0;
+  uint8_t system_s = 0, gyro_s = 0, accel_s = 0, mag_s = 0;
   bno.getCalibration(&system_s, &gyro_s, &accel_s, &mag_s);
   Serial.printf("Calibration: Sys=%u Gyro=%u Accel=%u Mag=%u\n", system_s, gyro_s, accel_s, mag_s);
 }
@@ -156,7 +165,7 @@ void IMUupdate(Odometry* o, Adafruit_BNO055& bno, bool& available) {
   o->imu_gyroz  = ang.gyro.z;
   // BNO055 NED/left-hand convention: negate all to match right-hand rule.
   // Register order: x=heading(yaw), y=BNO-roll(->vehicle pitch), z=BNO-pitch(->vehicle roll)
-  o->imu_euler_yaw   = -ori.orientation.x;
+  o->imu_euler_yaw   = ori.orientation.x;
   o->imu_euler_pitch = -ori.orientation.y;
   o->imu_euler_roll  = -ori.orientation.z;
   o->imu_magx = mag.magnetic.x;
